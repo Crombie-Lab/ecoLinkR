@@ -4,13 +4,21 @@ Title: What the Package Does (Title Case)
 Version: 0.1.0
 Authors@R: c(
     person(
-      "Jane", "Doe",
-      email = "jane@example.com",
+      "Lainie", "Boldus",
+      email = "lboldus@mac.com",
       role = c("aut", "cre")
-    )
+    ),
+    person(
+      "Tim", "Crombie",
+      email = "tim.crombie@gmail.com",
+      role = c("aut", "cre")
   )
-Description: More about what it does (maybe more than one line).
-    Continuation lines should be indented.
+Description: An R package for linking ecological collections with species identifications, environmental data, and participant metadata
 License: What license is it under?
 Encoding: UTF-8
 LazyData: true
+Imports: 
+    dplyr,
+    gsheet,
+    readr,
+    tibble
