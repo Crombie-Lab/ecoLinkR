@@ -14,7 +14,7 @@ Authors@R: c(
       role = c("aut", "cre")
   )
 Description: An R package for linking ecological collections with species identifications, environmental data, and participant metadata
-License: What license is it under?
+License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
 Imports: 
