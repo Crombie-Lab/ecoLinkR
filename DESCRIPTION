@@ -1,24 +1,29 @@
-Package: ecolinkR
-Type: Package
-Title: What the Package Does (Title Case)
+Package: ecoLinkR
+Title: Ecological Data Linking Tools
 Version: 0.1.0
 Authors@R: c(
     person(
-      "Lainie", "Boldus",
+      given = "Lainie",
+      family = "Boldus",
       email = "lboldus@mac.com",
       role = c("aut", "cre")
     ),
     person(
-      "Tim", "Crombie",
+      given = "Tim",
+      family = "Crombie",
       email = "tim.crombie@gmail.com",
-      role = c("aut", "cre")
-  )
-Description: An R package for linking ecological collections with species identifications, environmental data, and participant metadata
+      role = "aut"
+    ))
+Description: Tools for linking collection and isolation data for nematode ecology.
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
-Imports: 
+Imports:
     dplyr,
     gsheet,
     readr,
     tibble
+RoxygenNote: 7.3.3
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
