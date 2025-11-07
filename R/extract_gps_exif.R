@@ -66,7 +66,7 @@ extract_gps_exif <- function(
     out_dir <- dirname(out_csv)
     if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
     readr::write_csv(gps_data, out_csv, na = "")
-    message("✅ EXIF data written to: ", out_csv)
+    message("EXIF data written to: ", out_csv)
   }
 
   gps_data
