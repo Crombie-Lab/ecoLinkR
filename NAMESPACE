@@ -2,3 +2,5 @@
 
 export(extract_gps_exif)
 export(join_col_iso)
+export(join_with_gps)
+importFrom(stats,setNames)

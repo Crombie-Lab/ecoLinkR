@@ -1,4 +1,4 @@
-#' Join collection/isolation data with GPS EXIF metadata (auto-clean & summarized)
+#' Join collection/isolation data with GPS EXIF metadata
 #'
 #' Reads a processed collection/isolation dataset and an EXIF GPS dataset,
 #' automatically detects and normalizes their join columns, performs a safe
@@ -16,6 +16,7 @@
 #'   matches (default: `TRUE` keeps all).
 #'
 #' @return A tibble containing the joined dataset.
+#' @importFrom stats setNames
 #' @export
 join_with_gps <- function(coliso_csv,
                           gps_csv,
@@ -47,7 +48,7 @@ join_with_gps <- function(coliso_csv,
   # ---- detect join columns ----
   if (!is.null(join_key)) {
     by_cols <- join_key
-    message("🔧 Joining by user-defined key: ",
+    message("Joining by user-defined key: ",
             paste(names(join_key), "=", unname(join_key)))
   } else {
     candidates1 <- c("c_label", "raw_col_img_name", "raw_iso_img_name",
@@ -61,11 +62,11 @@ join_with_gps <- function(coliso_csv,
     if (length(match1) > 0 && length(match2) > 0) {
       by_cols <- setNames(match2[1], match1[1])
       message("Auto-detected join columns: ",
-              match1[1], " (coliso) ↔ ", match2[1], " (gps)")
+              match1[1], " (coliso) ", match2[1], " (gps)")
     } else {
       common_cols <- intersect(names1, names2)
       if (length(common_cols) == 0L) {
-        warning("No shared or similar join columns found — returning original dataset unchanged.")
+        warning("No shared or similar join columns found, returning original dataset unchanged.")
         return(df1)
       }
       by_cols <- common_cols
@@ -86,13 +87,13 @@ join_with_gps <- function(coliso_csv,
   n_matched <- length(matched_keys)
   pct <- 100 * n_matched / max(1, n_left)
 
-  message(sprintf("📊 Match summary: %d collection rows, %d GPS rows → %d matched (%.1f%% coverage)",
+  message(sprintf("Match summary: %d collection rows, %d GPS rows, %d matched (%.1f%% coverage)",
                   n_left, n_right, n_matched, pct))
 
   # ---- handle unmatched rows ----
   if (!keep_unmatched) {
     joined_df <- dplyr::filter(joined_df, .data[[join_col_left]] %in% matched_keys)
-    message("🧹 Dropped unmatched collection rows (keep_unmatched = FALSE).")
+    message("Dropped unmatched collection rows (keep_unmatched = FALSE).")
   }
 
   # ---- check if GPS columns are filled ----
