@@ -36,10 +36,10 @@ test_that("join_col_iso runs cleanly with dummy data", {
 
   # Run the function with mock data
   result <- join_col_iso(
-    col_sheet_url = "col_dummy",
-    iso_sheet_url = "iso_dummy",
-    col_photo_dir = tmp_col_dir,
-    iso_photo_dir = tmp_iso_dir,
+    c_url = "col_dummy",
+    i_url = "iso_dummy",
+    c_photo_dir = tmp_col_dir,
+    i_photo_dir = tmp_iso_dir,
     out_dir = tmp_out_dir,
     write_csv = FALSE
   )

@@ -5,23 +5,23 @@
 \title{Join collection and isolation data with photo filenames}
 \usage{
 join_col_iso(
-  col_sheet_url,
-  iso_sheet_url,
-  col_photo_dir,
-  iso_photo_dir,
+  c_url,
+  i_url,
+  c_photo_dir,
+  i_photo_dir,
   out_dir,
   out_filename = "joinedcoliso.csv",
   write_csv = TRUE
 )
 }
 \arguments{
-\item{col_sheet_url}{Character. Google Sheets URL for the collection data.}
+\item{c_url}{Character. Google Sheets URL for the collection data.}
 
-\item{iso_sheet_url}{Character. Google Sheets URL for the isolation data.}
+\item{i_url}{Character. Google Sheets URL for the isolation data.}
 
-\item{col_photo_dir}{Character. Directory containing collection photos.}
+\item{c_photo_dir}{Character. Directory containing collection photos.}
 
-\item{iso_photo_dir}{Character. Directory containing isolation photos.}
+\item{i_photo_dir}{Character. Directory containing isolation photos.}
 
 \item{out_dir}{Character. Directory where the joined CSV will be saved.}
 
