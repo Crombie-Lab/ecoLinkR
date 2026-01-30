@@ -1,174 +1,129 @@
-#' Join collection/isolation table with EXIF/GPS table
+#' Join TCS coliso data with EXIF/GPS metadata
 #'
-#' Reads two CSVs, normalizes filename-like keys (to make joins robust),
-#' left-joins GPS/EXIF metadata onto the collection/isolation table, and
-#' optionally writes the result to disk.
+#' This helper is designed for the Crombie Lab TCS workflow to join
+#' `tcs1125_exif.csv` (EXIF/GPS extracted from images) onto
+#' `TCS202511_coliso.csv` (collection/isolation sheet).
 #'
-#' Key normalization is designed to match common Crombie-lab style IDs:
-#' - strips paths + extensions
-#' - lowercases
-#' - removes dashes/underscores/spaces
-#' - removes URL query strings (e.g., ?raw=1)
+#' It performs a **left join** (keeps all coliso rows), using a robust
+#' filename normalization so joins work even when one table has paths,
+#' extensions, mixed case, or punctuation differences (e.g. `C-0001.JPG`
+#' vs `c0001`).
 #'
-#' @param coliso_csv Path to the collection/isolation CSV.
-#' @param gps_csv Path to the EXIF/GPS CSV.
-#' @param out_csv Optional path to write the joined CSV.
-#' @param join_key Named character vector mapping left->right join columns
-#'   (e.g. c("raw_col_img_name" = "FileName")).
-#'   If NULL, attempts to auto-detect a reasonable pair.
-#' @param keep_unmatched Logical; if FALSE, drops rows in coliso with no match.
-#' @param normalize_keys Logical; if TRUE (default), creates normalized join
-#'   helper columns and joins on those.
-#' @param verbose Logical; print diagnostics and match summaries.
+#' By default it joins:
+#' - coliso: `raw_col_img_name`
+#' - exif:  `FileName`
 #'
-#' @return A data frame of joined data.
+#' EXIF columns are prefixed with `exif_` to avoid collisions and to make
+#' provenance obvious in the final table.
+#'
+#' @param coliso_csv Path to the coliso CSV (e.g., `TCS202511_coliso.csv`)
+#' @param exif_csv Path to the exif CSV (e.g., `tcs1125_exif.csv`)
+#' @param out_csv Optional path to write the joined CSV. If NULL, nothing is written.
+#' @param coliso_img_col Column in coliso to join on. Defaults to `raw_col_img_name`.
+#' @param exif_img_col Column in exif to join on. Defaults to `FileName`.
+#' @param keep_unmatched If FALSE, drops coliso rows with no EXIF match.
+#' @param verbose If TRUE, prints match diagnostics.
+#'
+#' @return A data frame: coliso with EXIF/GPS columns appended.
 #' @export
 join_with_gps <- function(coliso_csv,
-                          gps_csv,
+                          exif_csv = NULL,
+                          gps_csv = NULL,
                           out_csv = NULL,
-                          join_key = NULL,
+                          coliso_img_col = "raw_col_img_name",
+                          exif_img_col   = "FileName",
                           keep_unmatched = TRUE,
-                          normalize_keys = TRUE,
                           verbose = TRUE) {
 
-  # ---- verify inputs ----
+  # Backwards compatibility: allow gps_csv as an alias of exif_csv
+  if (is.null(exif_csv) && !is.null(gps_csv)) exif_csv <- gps_csv
+  if (is.null(exif_csv)) stop("You must supply exif_csv (or gps_csv).")
+
+  # ---- checks ----
   if (!file.exists(coliso_csv)) stop("File not found: ", coliso_csv)
-  if (!file.exists(gps_csv)) stop("File not found: ", gps_csv)
+  if (!file.exists(exif_csv)) stop("File not found: ", exif_csv)
 
-  # ---- read CSVs ----
-  df1 <- readr::read_csv(coliso_csv, show_col_types = FALSE)
-  df2 <- readr::read_csv(gps_csv, show_col_types = FALSE)
+  df_coliso <- readr::read_csv(coliso_csv, show_col_types = FALSE)
+  df_exif   <- readr::read_csv(exif_csv, show_col_types = FALSE)
 
-  # ---- helper: robust filename normalization ----
+  if (!coliso_img_col %in% names(df_coliso)) {
+    stop("coliso_img_col not found in coliso: ", coliso_img_col)
+  }
+  if (!exif_img_col %in% names(df_exif)) {
+    stop("exif_img_col not found in exif: ", exif_img_col)
+  }
+
+  # ---- robust key normalization ----
   normalize_name <- function(x) {
     x <- as.character(x)
     x <- trimws(x)
-    x <- sub("\\?.*$", "", x)                 # drop URL query strings
-    x <- basename(x)                          # drop directories
-    x <- tools::file_path_sans_ext(x)         # drop extensions
-    x <- tolower(x)                           # normalize case
-    x <- gsub("[-_\\s]", "", x)               # remove -, _, spaces
+    x <- sub("\\?.*$", "", x)                  # drop URL query strings
+    x <- basename(x)                           # drop directories
+    x <- tools::file_path_sans_ext(x)          # drop extensions
+    x <- tolower(x)                            # normalize case
+    x <- gsub("[-_\\s]", "", x)                # remove dashes/underscores/spaces
     x
   }
 
-  # ---- determine join columns ----
-  names1 <- names(df1)
-  names2 <- names(df2)
+  df_coliso <- dplyr::mutate(df_coliso, .join_key = normalize_name(.data[[coliso_img_col]]))
+  df_exif   <- dplyr::mutate(df_exif,   .join_key = normalize_name(.data[[exif_img_col]]))
 
-  if (!is.null(join_key)) {
-    # expect named vector: left_name = right_name
-    if (is.null(names(join_key)) || any(names(join_key) == "")) {
-      stop("join_key must be a *named* character vector, e.g. c('raw_col_img_name'='FileName').")
-    }
-    left_key  <- names(join_key)[1]
-    right_key <- unname(join_key)[1]
-
-    if (!left_key %in% names1) stop("Left join column not found in coliso: ", left_key)
-    if (!right_key %in% names2) stop("Right join column not found in gps: ", right_key)
-
-    if (verbose) {
-      message("Joining by user-defined key: ", left_key, " (coliso) = ", right_key, " (gps)")
-    }
-  } else {
-    # auto-detect reasonable join columns
-    candidates_left  <- c("raw_col_img_name", "raw_iso_img_name", "c_label", "img_name", "filename", "FileName")
-    candidates_right <- c("FileName", "SourceFile", "raw_col_img_name", "raw_iso_img_name", "c_label", "img_name", "filename")
-
-    left_matches  <- intersect(candidates_left, names1)
-    right_matches <- intersect(candidates_right, names2)
-
-    if (length(left_matches) == 0 || length(right_matches) == 0) {
-      common_cols <- intersect(names1, names2)
-      if (length(common_cols) == 0) {
-        warning("No joinable columns found; returning original dataset unchanged.")
-        return(df1)
-      }
-      left_key <- common_cols[1]
-      right_key <- common_cols[1]
-      if (verbose) message("Auto-detected shared join column: ", left_key)
-    } else {
-      left_key <- left_matches[1]
-      # pick best matching right key preference order:
-      # if left is a filename-ish column, prefer FileName/SourceFile
-      if (left_key %in% c("raw_col_img_name", "raw_iso_img_name", "img_name", "filename", "FileName")) {
-        right_key <- if ("FileName" %in% right_matches) "FileName" else right_matches[1]
-        if ("SourceFile" %in% right_matches) right_key <- right_key # keep FileName priority; SourceFile used if no FileName
-        if (!"FileName" %in% right_matches && "SourceFile" %in% right_matches) right_key <- "SourceFile"
-      } else {
-        right_key <- right_matches[1]
-      }
-      if (verbose) message("Auto-detected join columns: ", left_key, " (coliso) = ", right_key, " (gps)")
-    }
+  # ---- handle duplicate EXIF keys (prevents row multiplication on join) ----
+  dup_keys <- df_exif$.join_key[duplicated(df_exif$.join_key) & !is.na(df_exif$.join_key)]
+  if (length(dup_keys) > 0) {
+    warning(
+      "Duplicate EXIF join keys detected (showing up to 10): ",
+      paste(utils::head(unique(dup_keys), 10), collapse = ", "),
+      ". Keeping the first occurrence per key."
+    )
+    df_exif <- dplyr::distinct(df_exif, .join_key, .keep_all = TRUE)
   }
 
-  # ---- normalize join keys in helper columns (recommended) ----
-  if (normalize_keys) {
-    df1 <- dplyr::mutate(df1, .join_key = normalize_name(.data[[left_key]]))
-    df2 <- dplyr::mutate(df2, .join_key = normalize_name(.data[[right_key]]))
+  # ---- rename EXIF columns with prefix to keep them from "disappearing" ----
+  # Keep the original exif filename column too (as exif_FileName by default).
+  exif_cols_to_rename <- setdiff(names(df_exif), ".join_key")
+  df_exif_prefixed <- dplyr::rename_with(
+    df_exif,
+    ~ paste0("exif_", .x),
+    .cols = dplyr::all_of(exif_cols_to_rename)
+  )
 
-    # perform join on helper key
-    joined_df <- dplyr::left_join(df1, df2, by = ".join_key", suffix = c(".coliso", ".gps"))
-  } else {
-    # legacy: join on raw columns directly
-    joined_df <- dplyr::left_join(df1, df2, by = stats::setNames(right_key, left_key),
-                                  suffix = c(".coliso", ".gps"))
-  }
+  # ---- join ----
+  joined <- dplyr::left_join(df_coliso, df_exif_prefixed, by = ".join_key")
 
-  # ---- match summary (row-level, not unique-key-level) ----
-  if (verbose) {
-    if (normalize_keys) {
-      rows_matched <- sum(!is.na(joined_df$.join_key) & joined_df$.join_key %in% df2$.join_key, na.rm = TRUE)
-      coverage <- 100 * rows_matched / max(1, nrow(df1))
-
-      message(sprintf(
-        "Match summary: %d coliso rows, %d gps rows, %d rows matched (%.1f%% coverage)",
-        nrow(df1), nrow(df2), rows_matched, coverage
-      ))
-
-      # show a few unmatched examples for debugging
-      if (rows_matched == 0) {
-        message("No matches detected. Example normalized keys:")
-        message("  coliso .join_key: ", paste(head(df1$.join_key, 10), collapse = ", "))
-        message("  gps   .join_key: ", paste(head(df2$.join_key, 10), collapse = ", "))
-      }
-    }
-  }
-
-  # ---- drop unmatched if requested ----
+  # ---- optional drop unmatched ----
   if (!keep_unmatched) {
-    if (normalize_keys) {
-      joined_df <- dplyr::filter(joined_df, .data$.join_key %in% df2$.join_key)
-    } else {
-      # if not normalized, "matched" means the left key exists on the right
-      joined_df <- dplyr::filter(joined_df, .data[[left_key]] %in% df2[[right_key]])
-    }
-    if (verbose) message("Dropped unmatched coliso rows (keep_unmatched = FALSE).")
+    joined <- dplyr::filter(joined, .join_key %in% df_exif$.join_key)
+    if (verbose) message("Dropped unmatched rows (keep_unmatched = FALSE).")
   }
 
-  # ---- optional: quick GPS presence check (flexible column names) ----
+
+  # ---- diagnostics ----
   if (verbose) {
-    gps_name_hits <- names(joined_df)[grepl("gps|latitude|longitude|altitude|lat$|lon$",
-                                            names(joined_df), ignore.case = TRUE)]
-    if (length(gps_name_hits) > 0) {
-      # pick a likely lat column for NA counting
-      lat_candidates <- gps_name_hits[grepl("lat", gps_name_hits, ignore.case = TRUE)]
-      if (length(lat_candidates) > 0) {
-        na_lat <- sum(is.na(joined_df[[lat_candidates[1]]]))
-        message(sprintf("%d/%d records have missing '%s'.",
-                        na_lat, nrow(joined_df), lat_candidates[1]))
-      }
-    } else {
-      message("No obvious GPS columns detected in joined output (by name pattern).")
+    rows_matched <- sum(df_coliso$.join_key %in% df_exif$.join_key, na.rm = TRUE)
+    coverage <- 100 * rows_matched / max(1, nrow(df_coliso))
+    message(sprintf(
+      "Match summary: %d coliso rows, %d exif rows, %d rows matched (%.1f%% coverage).",
+      nrow(df_coliso), nrow(df_exif), rows_matched, coverage
+    ))
+
+    # show whether GPS is actually being populated
+    if ("exif_GPSLatitude" %in% names(joined) && "exif_GPSLongitude" %in% names(joined)) {
+      n_with_gps <- sum(!is.na(joined$exif_GPSLatitude) | !is.na(joined$exif_GPSLongitude), na.rm = TRUE)
+      message(sprintf("Rows with any GPS (lat/lon not NA): %d/%d", n_with_gps, nrow(joined)))
     }
   }
 
-  # ---- write to CSV ----
+  # ---- clean up ----
+  joined <- dplyr::select(joined, -dplyr::any_of(".join_key"))
+
+  # ---- write output ----
   if (!is.null(out_csv)) {
     out_dir <- dirname(out_csv)
     if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
-    readr::write_csv(joined_df, out_csv, na = "")
-    if (verbose) message("Joined data written to: ", out_csv)
+    readr::write_csv(joined, out_csv, na = "")
+    if (verbose) message("Wrote joined CSV: ", out_csv)
   }
 
-  joined_df
+  joined
 }

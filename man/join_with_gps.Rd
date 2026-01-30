@@ -2,38 +2,52 @@
 % Please edit documentation in R/join_with_gps.R
 \name{join_with_gps}
 \alias{join_with_gps}
-\title{Join collection/isolation data with GPS EXIF metadata}
+\title{Join TCS coliso data with EXIF/GPS metadata}
 \usage{
 join_with_gps(
   coliso_csv,
-  gps_csv,
+  exif_csv = NULL,
+  gps_csv = NULL,
   out_csv = NULL,
-  join_key = NULL,
-  keep_unmatched = TRUE
+  coliso_img_col = "raw_col_img_name",
+  exif_img_col = "FileName",
+  keep_unmatched = TRUE,
+  verbose = TRUE
 )
 }
 \arguments{
-\item{coliso_csv}{Character. Path to the processed collection/isolation CSV file.}
+\item{coliso_csv}{Path to the coliso CSV (e.g., `TCS202511_coliso.csv`)}
 
-\item{gps_csv}{Character. Path to the processed GPS EXIF metadata CSV file.}
+\item{exif_csv}{Path to the exif CSV (e.g., `tcs1125_exif.csv`)}
 
-\item{out_csv}{Character. Optional output CSV file path. If `NULL`
-(default), the result is returned but not written to disk.}
+\item{out_csv}{Optional path to write the joined CSV. If NULL, nothing is written.}
 
-\item{join_key}{Optional manual join mapping (e.g. `c("raw_col_img_name" = "FileName")`).}
+\item{coliso_img_col}{Column in coliso to join on. Defaults to `raw_col_img_name`.}
 
-\item{keep_unmatched}{Logical. If `FALSE`, drops collection rows without GPS
-matches (default: `TRUE` keeps all).}
+\item{exif_img_col}{Column in exif to join on. Defaults to `FileName`.}
+
+\item{keep_unmatched}{If FALSE, drops coliso rows with no EXIF match.}
+
+\item{verbose}{If TRUE, prints match diagnostics.}
 }
 \value{
-A tibble containing the joined dataset.
+A data frame: coliso with EXIF/GPS columns appended.
 }
 \description{
-Reads a processed collection/isolation dataset and an EXIF GPS dataset,
-automatically detects and normalizes their join columns, performs a safe
-left join, and summarizes the match results.
+This helper is designed for the Crombie Lab TCS workflow to join
+`tcs1125_exif.csv` (EXIF/GPS extracted from images) onto
+`TCS202511_coliso.csv` (collection/isolation sheet).
 }
 \details{
-Handles mismatched file paths or extensions automatically (e.g.,
-"/Users/.../C-0001.png" vs "C-0001").
+It performs a **left join** (keeps all coliso rows), using a robust
+filename normalization so joins work even when one table has paths,
+extensions, mixed case, or punctuation differences (e.g. `C-0001.JPG`
+vs `c0001`).
+
+By default it joins:
+- coliso: `raw_col_img_name`
+- exif:  `FileName`
+
+EXIF columns are prefixed with `exif_` to avoid collisions and to make
+provenance obvious in the final table.
 }
