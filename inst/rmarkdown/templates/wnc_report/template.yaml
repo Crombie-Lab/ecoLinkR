@@ -1,0 +1,3 @@
+name: "Wild Nematode Collections Report"
+description: "Generates a WNC report with overview tables, summaries, plots, and a map."
+create_dir: false

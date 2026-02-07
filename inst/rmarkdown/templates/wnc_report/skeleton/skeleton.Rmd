@@ -1,0 +1,430 @@
+---
+title: "Wild Nematode Collections"
+author: "Lainie Boldus"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output: html_document
+params:
+  csv_overview: "data/wnc/completedatasheetwildnematodecol.csv"
+  csv_full:     "data/wnc/completedatasheetwildnematodecol2.csv"
+  write_map_html: true
+  map_html_file: "index.html"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = FALSE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+## Wild Collection Project Overview
+```{r project overview}
+library(readr)
+library(dplyr)
+library(lubridate)
+library(janitor)
+library(DT)
+library(tibble)
+
+raw_in <- readr::read_csv(params$csv_overview, show_col_types = FALSE) %>%
+  janitor::clean_names() %>%
+  mutate(across(everything(), ~ if (is.character(.x)) na_if(trimws(.x), "") else .x))
+
+pick_col <- function(dat, candidates) {
+  hit <- intersect(candidates, names(dat))
+  if (length(hit) == 0) return(list(name = NA_character_, values = rep(NA, nrow(dat))))
+  list(name = hit[1], values = dat[[hit[1]]])
+}
+
+safe_parse_date <- function(x) {
+  if (inherits(x, "Date"))   return(x)
+  if (inherits(x, "POSIXt")) return(as_date(x))
+  x <- as.character(x)
+  x[is.na(x) | x %in% c("", "NA", "NULL")] <- NA
+  x[nchar(x) > 30] <- NA
+  out <- rep(as.Date(NA), length(x))
+
+  num <- suppressWarnings(as.numeric(x))
+  is_excel <- !is.na(num) & num >= 20000 & num <= 60000
+  out[is_excel] <- as.Date(num[is_excel], origin = "1899-12-30")
+
+  is_unix_sec <- !is.na(num) & num >= 1e9 & num < 2e10
+  out[is_unix_sec] <- as_date(as.POSIXct(num[is_unix_sec], origin = "1970-01-01", tz = "UTC"))
+
+  is_unix_ms <- !is.na(num) & num >= 1e11 & num < 1e14
+  out[is_unix_ms] <- as_date(as.POSIXct(num[is_unix_ms]/1000, origin = "1970-01-01", tz = "UTC"))
+
+  todo <- which(is.na(out) & !is.na(x))
+  if (length(todo) > 0) {
+    parsed <- suppressWarnings(
+      parse_date_time(
+        x[todo],
+        orders = c("Ymd","Y-m-d","mdy","dmy",
+                   "Ymd HMS","Y-m-d H:M:S","mdy HMS","dmy HMS",
+                   "b d Y","B d Y","b d, Y","B d, Y"),
+        tz = "UTC"
+      )
+    )
+    out[todo] <- as_date(parsed)
+  }
+  out
+}
+
+p_coll  <- pick_col(raw_in, c("collection_by","collector","collected_by","collectedby"))
+p_isol  <- pick_col(raw_in, c("isolation_by","isolator","isolated_by"))
+p_cdate <- pick_col(raw_in, c("collection_date_utc","collection_date","collection_datetime_utc"))
+p_clab  <- pick_col(raw_in, c("c_label","collection_id","collection_label"))
+p_spec  <- pick_col(raw_in, c("species_id","species"))
+
+proj_like <- unique(c(
+  intersect(c("project","project_name","easyfulcrum_project","projectid","project_id","project_code","project_title"),
+            names(raw_in)),
+  grep("(proj|project)", names(raw_in), value = TRUE, ignore.case = TRUE)
+))
+proj_tally <- if (length(proj_like)) {
+  sapply(proj_like, function(nm) sum(!is.na(raw_in[[nm]]) & raw_in[[nm]] != ""), USE.NAMES = TRUE)
+} else integer(0)
+chosen_proj_col <- if (length(proj_tally)) names(sort(proj_tally, decreasing = TRUE))[1] else NA_character_
+
+dat <- tibble(
+  project             = if (!is.na(chosen_proj_col)) as.character(raw_in[[chosen_proj_col]]) else NA_character_,
+  collection_by       = p_coll$values,
+  isolation_by        = p_isol$values,
+  collection_date_utc = safe_parse_date(p_cdate$values),
+  c_label             = p_clab$values,
+  species_id          = p_spec$values
+)
+
+sf <- lubridate::stamp("Tuesday, September 30, 1997")
+
+personnel_projects <- dat %>% distinct(project) %>% filter(!is.na(project)) %>% pull() %>% data.frame()
+personnel_collectors <- dat %>% distinct(collection_by) %>% filter(!is.na(collection_by)) %>% pull() %>% data.frame()
+personnel_isolators <- dat %>% distinct(isolation_by) %>% filter(!is.na(isolation_by)) %>% pull() %>% data.frame()
+
+collection_dates <- dat %>%
+  distinct(collection_date_utc) %>%
+  filter(!is.na(collection_date_utc)) %>%
+  arrange(collection_date_utc) %>%
+  pull(collection_date_utc) %>%
+  sf() %>%
+  data.frame()
+
+DT::datatable(personnel_projects, colnames = "Collection project names:", rownames = FALSE,
+              options = list(dom = "t", ordering = FALSE))
+DT::datatable(personnel_collectors, colnames = "Participants in collection:", rownames = FALSE,
+              options = list(dom = "t"))
+DT::datatable(personnel_isolators, colnames = "Participants in strain isolation:", rownames = FALSE,
+              options = list(dom = "t"))
+DT::datatable(collection_dates, colnames = "Dates of collection:", rownames = FALSE,
+              options = list(dom = "t"))
+```
+
+
+## Wild Collections Data Tables
+```{r collection data tables}
+library(readr)
+library(dplyr)
+library(stringr)
+library(janitor)
+library(DT)
+
+raw <- readr::read_csv(params$csv_overview, show_col_types = FALSE) %>%
+  janitor::clean_names()
+
+# Normalize key inputs safely
+df_clean <- raw %>%
+  mutate(
+    c_label = if ("c_label" %in% names(.)) c_label else NA_character_,
+    species_id = if ("species_id" %in% names(.)) species_id else NA_character_,
+    worms_on_sample = if ("worms_on_sample" %in% names(.)) worms_on_sample else NA_character_
+  ) %>%
+  mutate(
+    species_id      = na_if(trimws(as.character(species_id)), ""),
+    worms_on_sample = na_if(trimws(as.character(worms_on_sample)), ""),
+    species_id      = ifelse(str_to_lower(species_id) %in% c("na", "n/a"), NA, species_id),
+    worms_on_sample = ifelse(str_to_lower(worms_on_sample) %in% c("na", "n/a"), NA, worms_on_sample),
+    species_norm    = species_id |> str_squish() |> str_to_lower(),
+    worms_norm_raw  = worms_on_sample |> str_squish() |> str_to_lower(),
+    worms_norm = case_when(
+      worms_norm_raw %in% c("yes","y","true","present") ~ "Yes",
+      worms_norm_raw %in% c("tracks","track","trace","traces") ~ "Tracks",
+      worms_norm_raw %in% c("no","n","false","absent") ~ "No",
+      TRUE ~ NA_character_
+    )
+  )
+
+collection_counts_1 <- df_clean %>%
+  filter(!is.na(c_label)) %>%
+  mutate(
+    class = case_when(
+      !is.na(species_norm) & worms_norm == "Yes" & str_detect(species_norm, "elegans") ~ "C. elegans",
+      !is.na(species_norm) & worms_norm == "Yes" & str_detect(species_norm, "tropicalis") ~ "C. tropicalis",
+      !is.na(species_norm) & worms_norm == "Yes" & str_detect(species_norm, "briggsae") ~ "C. briggsae",
+      !is.na(species_norm) & worms_norm == "Yes" & str_detect(species_norm, "^caenorhabditis") ~ "other-Caenorhabditis",
+      !is.na(species_norm) & worms_norm == "Yes" & !str_detect(species_norm, "^caenorhabditis") ~ "non-Caenorhabditis",
+      is.na(species_norm)  & worms_norm %in% c("Yes","Tracks") ~ "unknown nematode",
+      is.na(species_norm)  & worms_norm == "No" ~ "no nematode",
+      TRUE ~ "unknown/NA"
+    ),
+    class = factor(
+      class,
+      levels = c(
+        "C. elegans","C. tropicalis","C. briggsae",
+        "other-Caenorhabditis","non-Caenorhabditis",
+        "unknown nematode","no nematode","unknown/NA"
+      )
+    )
+  )
+
+collection_distinct <- dplyr::n_distinct(collection_counts_1$c_label)
+message("Total number of distinct collections: ", collection_distinct)
+
+collection_worms_on_sample <- collection_counts_1 %>%
+  distinct(c_label, .keep_all = TRUE) %>%
+  count(worms_norm, name = "n") %>%
+  mutate(
+    worms_on_sample = ifelse(is.na(worms_norm), "unknown/NA", worms_norm),
+    worms_on_sample = factor(worms_on_sample, levels = c("Yes","Tracks","No","unknown/NA"))
+  ) %>%
+  select(worms_on_sample, n)
+
+collection_species_id <- collection_counts_1 %>%
+  distinct(c_label, .keep_all = TRUE) %>%
+  count(class, name = "n")
+
+DT::datatable(
+  collection_worms_on_sample,
+  colnames = c("worms on sample", "number of collections"),
+  rownames = FALSE,
+  filter = "none",
+  options = list(dom = "t")
+)
+
+DT::datatable(
+  collection_species_id,
+  colnames = c("collection class", "number of collections"),
+  rownames = FALSE,
+  filter = "none",
+  options = list(dom = "t")
+)
+```
+
+## All Wild Collections Table
+```{r all collections table}
+library(readr)
+library(dplyr)
+library(janitor)
+library(DT)
+
+df_raw <- readr::read_csv(params$csv_full, show_col_types = FALSE) %>%
+  janitor::clean_names()
+
+# Normalize column names you used previously, but safely
+df <- df_raw %>%
+  rename(
+    collection_by = any_of(c("collected_by", "collection_by")),
+    proc_ambient_temperature = any_of(c("ambient_temperature", "proc_ambient_temperature")),
+    proc_substrate_temperature = any_of(c("substrate_temperature", "proc_substrate_temperature")),
+    collection_altitude = any_of(c("gpsaltitude", "collection_altitude"))
+  )
+
+# Select what exists; keep a consistent display order
+cols_wanted <- c(
+  "c_label","s_label","species_id",
+  "proc_ambient_temperature","ambient_humidity",
+  "proc_substrate_temperature","collection_altitude",
+  "substrate","landscape","collection_by"
+)
+
+collections_df <- df %>%
+  select(any_of(cols_wanted))
+
+DT::datatable(
+  collections_df,
+  rownames = FALSE,
+  colnames = c(
+    "C-label", "S-label", "SpeciesID",
+    "AmbientTemp (°C)", "AmbientHumidity (%)",
+    "SubstrateTemp (°C)", "Altitude (m)",
+    "Substrate", "Landscape", "CollectedBy"
+  )[seq_len(ncol(collections_df))],
+  filter = "none",
+  options = list(dom = "ftrp", scrollX = TRUE)
+)
+```
+
+## Wild Collections Plots
+```{r wild collections plots}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(janitor)
+library(cowplot)
+library(ggplot2)
+
+df_raw <- readr::read_csv(params$csv_full, show_col_types = FALSE) %>%
+  janitor::clean_names()
+
+# Try to pick a sensible project column (works across different exports)
+project_candidates <- intersect(
+  c("project", "project_name", "easyfulcrum_project", "project_id", "project_code", "project_title"),
+  names(df_raw)
+)
+project_col <- if (length(project_candidates)) project_candidates[1] else NA_character_
+
+df <- df_raw %>%
+  mutate(project = if (!is.na(project_col)) as.character(.data[[project_col]]) else NA_character_) %>%
+  rename(
+    collection_altitude = any_of(c("gpsaltitude", "collection_altitude")),
+    ambient_temperature = any_of(c("ambient_temperature", "proc_ambient_temperature")),
+    substrate_temperature = any_of(c("substrate_temperature", "proc_substrate_temperature"))
+  )
+
+stat_df <- df %>%
+  distinct(project, c_label, .keep_all = TRUE) %>%
+  select(any_of(c(
+    "project","c_label","s_label","species_id",
+    "ambient_temperature","ambient_humidity","substrate_temperature","collection_altitude"
+  ))) %>%
+  pivot_longer(
+    cols = any_of(c("ambient_temperature","ambient_humidity","substrate_temperature","collection_altitude")),
+    names_to = "env_par",
+    values_to = "value"
+  ) %>%
+  mutate(value = suppressWarnings(as.numeric(value)))
+
+mk_box <- function(.data, par, ylab, show_legend = FALSE) {
+  p <- ggplot(data = .data %>% filter(env_par == par)) +
+    geom_boxplot(aes(x = env_par, y = value), outlier.color = NA) +
+    geom_jitter(aes(x = env_par, y = value, shape = project), size = 1.5, width = 0.25) +
+    theme_bw() +
+    labs(x = "", y = ylab) +
+    theme(
+      axis.title = element_text(size = 9, face = "bold", color = "black"),
+      axis.text  = element_text(size = 9, color = "black"),
+      axis.text.x = element_text(size = 9, face = "italic", color = "black"),
+      legend.position = if (show_legend) "right" else "none"
+    )
+  p
+}
+
+p_atemp <- mk_box(stat_df, "ambient_temperature", "Ambient temperature (°C)", show_legend = TRUE)
+legend <- cowplot::get_legend(p_atemp)
+p_atemp <- p_atemp + theme(legend.position = "none")
+
+p_stemp <- mk_box(stat_df, "substrate_temperature", "Substrate temperature (°C)")
+p_ahum  <- mk_box(stat_df, "ambient_humidity", "Ambient humidity (%)")
+p_elev  <- mk_box(stat_df, "collection_altitude", "Elevation (m)")
+
+plots <- cowplot::plot_grid(p_atemp, p_stemp, p_ahum, p_elev, ncol = 2, align = "hv", axis = "l")
+cowplot::plot_grid(plots, legend, ncol = 2, rel_widths = c(1, 0.23))
+```
+
+
+## Wild Collections Map
+```{r collections map}
+library(readr)
+library(dplyr)
+library(glue)
+library(leaflet)
+library(rlang)
+library(stringr)
+
+raw <- read_csv(params$csv_full, show_col_types = FALSE)
+
+df <- raw %>%
+  rename(
+    collection_longitude = GPSLongitude,
+    collection_latitude  = GPSLatitude,
+    collection_altitude  = GPSAltitude,
+    collection_by        = collected_by,
+    collection_location  = landscape,
+    sample_photo1_processed_url = raw_col_img_name
+  ) %>%
+  mutate(
+    collection_latitude  = as.numeric(collection_latitude),
+    collection_longitude = as.numeric(collection_longitude),
+    species_norm = species_id |>
+      str_trim() |>
+      str_squish() |>
+      str_replace_all("\\.", "") |>
+      str_to_lower(),
+    species_code = case_when(
+      str_detect(species_norm, "elegans") ~ "Ce",
+      str_detect(species_norm, "briggsae") ~ "Cb",
+      str_detect(species_norm, "oscheius") ~ "Om",
+      species_norm == "om" ~ "Om",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(color_tmp = case_when(
+    species_code == "Om" ~ "red",
+    species_code == "Cb" ~ "orange",
+    species_code == "Ce" ~ "blue",
+    TRUE ~ "black"
+  )) %>%
+  group_by(c_label) %>%
+  mutate(
+    color = case_when(
+      any(species_code == "Om", na.rm = TRUE) ~ "red",
+      any(species_code == "Cb", na.rm = TRUE) ~ "orange",
+      any(species_code == "Ce", na.rm = TRUE) ~ "blue",
+      TRUE ~ "black"
+    )
+  ) %>%
+  ungroup()
+
+if (!"substrate" %in% names(df)) df$substrate <- NA_character_
+
+map_target_species <- function(df, color_use) {
+  df2 <- df %>%
+    filter(!is.na(collection_longitude), !is.na(collection_latitude)) %>%
+    filter(!is.na(.data[[color_use]])) %>%
+    mutate(substrate = if_else(is.na(substrate), "", substrate)) %>%
+    arrange(species_id)
+
+  if (nrow(df2) == 0) stop("No rows to map.")
+
+  icons <- leaflet::awesomeIcons(
+    icon        = "circle",
+    library     = "fa",
+    markerColor = df2[[color_use]],
+    iconColor   = "white"
+  )
+
+  popups <- glue::glue_data(
+    df2,
+    "<h2>{c_label}</h2><hr />
+     <strong>Collected by:</strong> {collection_by}<br />
+     <strong>Latitude, Longitude:</strong> {format(round(collection_latitude, 6), nsmall = 6)}, {format(round(collection_longitude, 6), nsmall = 6)}<br />
+     <strong>Collection altitude (m):</strong> {collection_altitude}<br />
+     <strong>Collection location:</strong> {collection_location}<br />
+     <strong>Substrate:</strong> {substrate}"
+  )
+
+  leaflet(df2, width = "100%", options = leafletOptions(zoomControl = TRUE)) %>%
+    addProviderTiles("CartoDB.Positron") %>%
+    addProviderTiles("Esri.WorldTopoMap", group = "Esri Topo") %>%
+    addCircleMarkers(lng = ~collection_longitude, lat = ~collection_latitude,
+                    radius = 4, stroke = FALSE, fillOpacity = 0.8, group = "Circles") %>%
+    addAwesomeMarkers(lng = ~collection_longitude, lat = ~collection_latitude,
+                      icon = icons, popup = popups,
+                      popupOptions = popupOptions(maxWidth = 500),
+                      group = "Icons") %>%
+    addLayersControl(overlayGroups = c("Icons", "Circles"),
+                     options = layersControlOptions(collapsed = FALSE))
+}
+
+m <- map_target_species(df, color_use = "color")
+m
+
+if (isTRUE(params$write_map_html)) {
+  htmlwidgets::saveWidget(m, file = params$map_html_file, title = "Wild Nematode Collection Map", selfcontained = TRUE)
+}
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
