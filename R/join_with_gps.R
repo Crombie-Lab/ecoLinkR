@@ -1,8 +1,7 @@
-#' Join TCS coliso data with EXIF/GPS metadata
+#' Join collection/isolation data frame with GPS data frame
 #'
-#' This helper is designed for the Crombie Lab TCS workflow to join
-#' `tcs1125_exif.csv` (EXIF/GPS extracted from images) onto
-#' `TCS202511_coliso.csv` (collection/isolation sheet).
+#'Creates a new data table displaying the complete collection/isolation data
+#'along with the GPS metadata extracted from the collection images.
 #'
 #' It performs a **left join** (keeps all coliso rows), using a robust
 #' filename normalization so joins work even when one table has paths,

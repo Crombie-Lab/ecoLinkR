@@ -2,7 +2,7 @@
 % Please edit documentation in R/join_with_gps.R
 \name{join_with_gps}
 \alias{join_with_gps}
-\title{Join TCS coliso data with EXIF/GPS metadata}
+\title{Join collection/isolation data frame with GPS data frame}
 \usage{
 join_with_gps(
   coliso_csv,
@@ -34,9 +34,8 @@ join_with_gps(
 A data frame: coliso with EXIF/GPS columns appended.
 }
 \description{
-This helper is designed for the Crombie Lab TCS workflow to join
-`tcs1125_exif.csv` (EXIF/GPS extracted from images) onto
-`TCS202511_coliso.csv` (collection/isolation sheet).
+Creates a new data table displaying the complete collection/isolation data
+along with the GPS metadata extracted from the collection images.
 }
 \details{
 It performs a **left join** (keeps all coliso rows), using a robust
