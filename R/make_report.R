@@ -6,7 +6,7 @@
 #' @param open Open the file in RStudio if possible.
 #'
 #' @export
-use_wnc_report <- function(path = "wnc_report.Rmd", open = interactive()) {
+make_report <- function(path = "wnc_report.Rmd", open = interactive()) {
 
   if (file.exists(path)) {
     stop("File already exists: ", path, call. = FALSE)
