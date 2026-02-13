@@ -2,7 +2,7 @@
 % Please edit documentation in R/use_wnc_report.R
 \name{use_wnc_report}
 \alias{use_wnc_report}
-\title{Create a Wild Nematode Collections R Markdown report}
+\title{Create a collections R Markdown report}
 \usage{
 use_wnc_report(path = "wnc_report.Rmd", open = interactive())
 }
@@ -12,5 +12,5 @@ use_wnc_report(path = "wnc_report.Rmd", open = interactive())
 \item{open}{Open the file in RStudio if possible.}
 }
 \description{
-Copies the package's WNC report skeleton to a new .Rmd file.
+Copies the package's collections skeleton to a new .Rmd file.
 }

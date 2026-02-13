@@ -1,6 +1,6 @@
-#' Create a Wild Nematode Collections R Markdown report
+#' Create a collections R Markdown report
 #'
-#' Copies the package's WNC report skeleton to a new .Rmd file.
+#' Copies the package's collections skeleton to a new .Rmd file.
 #'
 #' @param path Where to write the new .Rmd file.
 #' @param open Open the file in RStudio if possible.
