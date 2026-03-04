@@ -7,7 +7,6 @@
 join_with_gps(
   coliso_csv,
   exif_csv = NULL,
-  gps_csv = NULL,
   out_csv = NULL,
   coliso_img_col = "raw_col_img_name",
   exif_img_col = "FileName",

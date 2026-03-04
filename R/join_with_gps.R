@@ -27,16 +27,11 @@
 #' @export
 join_with_gps <- function(coliso_csv,
                           exif_csv = NULL,
-                          gps_csv = NULL,
                           out_csv = NULL,
                           coliso_img_col = "raw_col_img_name",
                           exif_img_col   = "FileName",
                           keep_unmatched = TRUE,
                           verbose = TRUE) {
-
-  # Backwards compatibility: allow gps_csv as an alias of exif_csv
-  if (is.null(exif_csv) && !is.null(gps_csv)) exif_csv <- gps_csv
-  if (is.null(exif_csv)) stop("You must supply exif_csv (or gps_csv).")
 
   # ---- checks ----
   if (!file.exists(coliso_csv)) stop("File not found: ", coliso_csv)
@@ -60,7 +55,7 @@ join_with_gps <- function(coliso_csv,
     x <- basename(x)                           # drop directories
     x <- tools::file_path_sans_ext(x)          # drop extensions
     x <- tolower(x)                            # normalize case
-    x <- gsub("[-_\\s]", "", x)                # remove dashes/underscores/spaces
+    x <- gsub("[^a-z0-9]", "", x)   # remove everything except letters/numbers
     x
   }
 
@@ -89,6 +84,27 @@ join_with_gps <- function(coliso_csv,
 
   # ---- join ----
   joined <- dplyr::left_join(df_coliso, df_exif_prefixed, by = ".join_key")
+
+  # ---- standardize EXIF column names (optional cleanup layer) ----
+  # Only rename if columns exist (prevents errors in partial EXIF exports)
+  rename_map <- c(
+    SourceFile       = "exif_SourceFile",
+    FileName         = "exif_FileName",
+    DateTimeOriginal = "exif_DateTimeOriginal",
+    GPSLongitude     = "exif_GPSLongitude",
+    GPSLatitude      = "exif_GPSLatitude",
+    GPSAltitude      = "exif_GPSAltitude"
+  )
+
+  existing <- rename_map[rename_map %in% names(joined)]  # named: new -> old
+
+  if (length(existing) > 0) {
+    # dplyr::rename expects new_name = old_name (as symbols)
+    joined <- dplyr::rename(
+      joined,
+      !!!stats::setNames(rlang::syms(unname(existing)), names(existing))
+    )
+  }
 
   # ---- optional drop unmatched ----
   if (!keep_unmatched) {

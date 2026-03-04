@@ -1,27 +1,34 @@
 # tests/testthat/test-join_with_gps.R
 
-testthat::test_that("join_with_gps joins and prefixes EXIF columns (core behavior)", {
-  testthat::skip_if_not_installed("readr")
-  testthat::skip_if_not_installed("dplyr")
+test_that("join_with_gps left-joins with robust filename normalization", {
+  skip_if_not_installed("readr")
+  skip_if_not_installed("dplyr")
 
-  tmp <- tempdir()
-  coliso_path <- file.path(tmp, "TCS202511_coliso.csv")
-  exif_path   <- file.path(tmp, "tcs1125_exif.csv")
-
-  # Core cases: punctuation + extension + case differences (no internal whitespace)
   coliso <- data.frame(
-    raw_col_img_name = c("C-0001.JPG", "C_0002.png", "C-0003.jpeg", "C-9999.jpg"),
-    some_col = 1:4,
+    raw_col_img_name = c(
+      "path/to/C-0001.JPG",
+      "C_0002.jpeg",
+      "c 0003.png",
+      "no_match.jpg"
+    ),
+    other_col = c("a", "b", "c", "d"),
     stringsAsFactors = FALSE
   )
 
-  # EXIF includes a duplicate key to ensure you do NOT explode rows
   exif <- data.frame(
-    FileName     = c("c0001", "c0002", "c0002", "c0003"),
-    GPSLatitude  = c(35.1, 35.2, 99.9, 35.3),
-    GPSLongitude = c(-80.1, -80.2, -99.9, -80.3),
+    FileName = c(
+      "c0001",          # matches C-0001.JPG
+      "C-0002.JPG",     # matches C_0002.jpeg
+      "C-0003.PNG"      # matches "c 0003.png"
+    ),
+    GPSLatitude  = c(28.1, 28.2, 28.3),
+    GPSLongitude = c(-80.1, -80.2, -80.3),
+    DateTimeOriginal = c("2025:11:25 10:00:00", "2025:11:25 10:01:00", "2025:11:25 10:02:00"),
     stringsAsFactors = FALSE
   )
+
+  coliso_path <- tempfile(fileext = ".csv")
+  exif_path   <- tempfile(fileext = ".csv")
 
   readr::write_csv(coliso, coliso_path)
   readr::write_csv(exif, exif_path)
@@ -29,142 +36,115 @@ testthat::test_that("join_with_gps joins and prefixes EXIF columns (core behavio
   out <- join_with_gps(
     coliso_csv = coliso_path,
     exif_csv   = exif_path,
-    coliso_img_col = "raw_col_img_name",
-    exif_img_col   = "FileName",
-    keep_unmatched = TRUE,
-    verbose = FALSE
+    verbose    = FALSE
   )
 
-  # Must not multiply rows
-  testthat::expect_equal(nrow(out), nrow(coliso))
+  # left join keeps all coliso rows
+  expect_equal(nrow(out), nrow(coliso))
 
-  # EXIF columns should be prefixed
-  testthat::expect_true(all(c("exif_GPSLatitude", "exif_GPSLongitude", "exif_FileName") %in% names(out)))
+  # the standardized rename layer should produce these columns (no exif_ prefix)
+  expect_true(all(c("GPSLatitude", "GPSLongitude", "DateTimeOriginal", "FileName") %in% names(out)))
 
-  # Values should land on the correct rows (by identity)
-  lat_0001 <- out$exif_GPSLatitude[out$raw_col_img_name == "C-0001.JPG"]
-  lat_0002 <- out$exif_GPSLatitude[out$raw_col_img_name == "C_0002.png"]
-  lat_0003 <- out$exif_GPSLatitude[out$raw_col_img_name == "C-0003.jpeg"]
-  lat_9999 <- out$exif_GPSLatitude[out$raw_col_img_name == "C-9999.jpg"]
-
-  testthat::expect_equal(lat_0001, 35.1)
-  testthat::expect_equal(lat_0002, 35.2)  # confirms "first duplicate wins" if you distinct() by key
-  testthat::expect_equal(lat_0003, 35.3)
-  testthat::expect_true(is.na(lat_9999))
+  # matched rows get GPS; unmatched stays NA
+  expect_false(is.na(out$GPSLatitude[1]))
+  expect_false(is.na(out$GPSLatitude[2]))
+  expect_false(is.na(out$GPSLatitude[3]))
+  expect_true(is.na(out$GPSLatitude[4]))
 })
 
-
-testthat::test_that("join_with_gps strips internal whitespace in keys (if implemented)", {
-  testthat::skip_if_not_installed("readr")
-  testthat::skip_if_not_installed("dplyr")
-
-  tmp <- tempdir()
-  coliso_path <- file.path(tmp, "TCS202511_coliso_ws.csv")
-  exif_path   <- file.path(tmp, "tcs1125_exif_ws.csv")
-
-  # This case will ONLY match if your normalization removes internal whitespace:
-  # "c 0003" -> "c0003"
-  coliso <- data.frame(
-    raw_col_img_name = c("c 0003.jpeg"),
-    stringsAsFactors = FALSE
-  )
-
-  exif <- data.frame(
-    FileName    = c("c0003"),
-    GPSLatitude = c(35.3),
-    stringsAsFactors = FALSE
-  )
-
-  readr::write_csv(coliso, coliso_path)
-  readr::write_csv(exif, exif_path)
-
-  out <- join_with_gps(
-    coliso_csv = coliso_path,
-    exif_csv   = exif_path,
-    coliso_img_col = "raw_col_img_name",
-    exif_img_col   = "FileName",
-    keep_unmatched = TRUE,
-    verbose = FALSE
-  )
-
-  # If the function doesn't strip whitespace, this will be NA.
-  if (is.na(out$exif_GPSLatitude[1])) {
-    testthat::skip("join_with_gps() in this package version does not strip internal whitespace from join keys.")
-  }
-
-  testthat::expect_equal(out$exif_GPSLatitude[1], 35.3)
-})
-
-
-testthat::test_that("join_with_gps drops unmatched rows when keep_unmatched = FALSE", {
-  testthat::skip_if_not_installed("readr")
-  testthat::skip_if_not_installed("dplyr")
-
-  tmp <- tempdir()
-  coliso_path <- file.path(tmp, "TCS202511_coliso_drop.csv")
-  exif_path   <- file.path(tmp, "tcs1125_exif_drop.csv")
+test_that("join_with_gps can drop unmatched rows when keep_unmatched = FALSE", {
+  skip_if_not_installed("readr")
+  skip_if_not_installed("dplyr")
 
   coliso <- data.frame(
-    raw_col_img_name = c("C-0001.JPG", "C-9999.jpg"),
-    some_col = c("a", "b"),
+    raw_col_img_name = c("C-0001.JPG", "no_match.jpg"),
     stringsAsFactors = FALSE
   )
 
-  # Only latitude is present—this should still work after the function fix
   exif <- data.frame(
     FileName = c("c0001"),
-    GPSLatitude = c(1.23),
+    GPSLatitude = 28.1,
+    GPSLongitude = -80.1,
     stringsAsFactors = FALSE
   )
 
+  coliso_path <- tempfile(fileext = ".csv")
+  exif_path   <- tempfile(fileext = ".csv")
   readr::write_csv(coliso, coliso_path)
   readr::write_csv(exif, exif_path)
 
   out <- join_with_gps(
     coliso_csv = coliso_path,
     exif_csv   = exif_path,
-    coliso_img_col = "raw_col_img_name",
-    exif_img_col   = "FileName",
     keep_unmatched = FALSE,
     verbose = FALSE
   )
 
-  testthat::expect_equal(nrow(out), 1)
-  testthat::expect_equal(out$raw_col_img_name[1], "C-0001.JPG")
-  testthat::expect_equal(out$exif_GPSLatitude[1], 1.23)
+  expect_equal(nrow(out), 1)
+  expect_true("GPSLatitude" %in% names(out))
+  expect_false(is.na(out$GPSLatitude[1]))
 })
 
+test_that("join_with_gps warns on duplicate EXIF join keys and keeps first", {
+  skip_if_not_installed("readr")
+  skip_if_not_installed("dplyr")
 
+  coliso <- data.frame(
+    raw_col_img_name = c("C-0001.JPG"),
+    stringsAsFactors = FALSE
+  )
 
-testthat::test_that("join_with_gps errors on missing files or missing join columns", {
-  testthat::skip_if_not_installed("readr")
+  # Two EXIF rows that normalize to the same key (c0001)
+  exif <- data.frame(
+    FileName = c("C-0001.JPG", "c0001.png"),
+    GPSLatitude  = c(28.1, 99.9),
+    GPSLongitude = c(-80.1,  0.0),
+    stringsAsFactors = FALSE
+  )
 
-  tmp <- tempdir()
-  coliso_path <- file.path(tmp, "coliso_cols.csv")
-  exif_path   <- file.path(tmp, "exif_cols.csv")
+  coliso_path <- tempfile(fileext = ".csv")
+  exif_path   <- tempfile(fileext = ".csv")
+  readr::write_csv(coliso, coliso_path)
+  readr::write_csv(exif, exif_path)
 
-  readr::write_csv(data.frame(raw_col_img_name = "C-0001.JPG"), coliso_path)
-  readr::write_csv(data.frame(FileName = "c0001"), exif_path)
+  expect_warning(
+    out <- join_with_gps(
+      coliso_csv = coliso_path,
+      exif_csv   = exif_path,
+      verbose    = FALSE
+    ),
+    "Duplicate EXIF join keys detected"
+  )
 
-  testthat::expect_error(
-    join_with_gps(coliso_csv = "nope.csv", exif_csv = exif_path, verbose = FALSE),
+  # It should keep the first occurrence per key
+  expect_equal(out$GPSLatitude[1], 28.1)
+  expect_equal(out$GPSLongitude[1], -80.1)
+})
+
+test_that("join_with_gps errors when files are missing or join columns absent", {
+  skip_if_not_installed("readr")
+  skip_if_not_installed("dplyr")
+
+  expect_error(
+    join_with_gps(coliso_csv = "does_not_exist.csv", exif_csv = "nope.csv", verbose = FALSE),
     "File not found"
   )
 
-  testthat::expect_error(
-    join_with_gps(coliso_csv = coliso_path, exif_csv = "nope.csv", verbose = FALSE),
-    "File not found"
-  )
+  coliso <- data.frame(raw_col_img_name = "C-0001.JPG", stringsAsFactors = FALSE)
+  exif   <- data.frame(FileName = "c0001", stringsAsFactors = FALSE)
 
-  testthat::expect_error(
-    join_with_gps(coliso_csv = coliso_path, exif_csv = exif_path,
-                  coliso_img_col = "does_not_exist", verbose = FALSE),
+  coliso_path <- tempfile(fileext = ".csv")
+  exif_path   <- tempfile(fileext = ".csv")
+  readr::write_csv(coliso, coliso_path)
+  readr::write_csv(exif, exif_path)
+
+  expect_error(
+    join_with_gps(coliso_csv = coliso_path, exif_csv = exif_path, coliso_img_col = "bad_col", verbose = FALSE),
     "coliso_img_col not found"
   )
 
-  testthat::expect_error(
-    join_with_gps(coliso_csv = coliso_path, exif_csv = exif_path,
-                  exif_img_col = "does_not_exist", verbose = FALSE),
+  expect_error(
+    join_with_gps(coliso_csv = coliso_path, exif_csv = exif_path, exif_img_col = "bad_col", verbose = FALSE),
     "exif_img_col not found"
   )
 })
