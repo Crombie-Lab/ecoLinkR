@@ -357,6 +357,8 @@ library(terra)
 library(htmlwidgets)
 library(tigris)
 library(sf)
+library(base64enc)
+library(tools)
 
 log_step <- function(msg) message(format(Sys.time(), "[%H:%M:%S] "), msg)
 
