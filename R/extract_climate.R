@@ -40,7 +40,7 @@
 #' @examples
 #' \dontrun{
 #' # Extract from a single raster
-#' clim_vals <- extract_climate_values(
+#' clim_vals <- extract_climate(
 #'   raster_paths = "data/processed/prism_mean_tmean.tif",
 #'   collection_df = collection_data,
 #'   lat_col = "GPSLatitude",
@@ -49,7 +49,7 @@
 #' )
 #'
 #' # Extract from multiple rasters with buffer
-#' clim_vals <- extract_climate_values(
+#' clim_vals <- extract_climate(
 #'   raster_paths = c(
 #'     "data/processed/prism_tmean.tif",
 #'     "data/processed/prism_ppt.tif"
@@ -62,7 +62,7 @@
 #' }
 #'
 #' @export
-extract_climate_values <- function(
+extract_climate <- function(
     raster_paths,
     collection_df,
     lat_col = NULL,
@@ -223,3 +223,7 @@ extract_climate_values <- function(
 
   result
 }
+
+#' @export
+#' @rdname extract_climate
+extract_climate_values <- extract_climate

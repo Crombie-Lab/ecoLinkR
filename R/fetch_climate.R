@@ -29,7 +29,7 @@
 #' @examples
 #' \dontrun{
 #' # Download PRISM data and save to a directory
-#' clim_data <- download_climate_data(
+#' clim_data <- fetch_climate(
 #'   variable = c("tmean", "ppt"),
 #'   start_date = "2024-11-01",
 #'   end_date = "2025-02-01",
@@ -38,7 +38,7 @@
 #' )
 #'
 #' # Use existing rasters from a directory
-#' clim_data <- download_climate_data(
+#' clim_data <- fetch_climate(
 #'   variable = c("tmean", "ppt"),
 #'   raster_dir = "data/processed",
 #'   use_prism = FALSE
@@ -46,7 +46,7 @@
 #' }
 #'
 #' @export
-download_climate_data <- function(
+fetch_climate <- function(
     variable = c("tmean", "ppt"),
     start_date = NULL,
     end_date = NULL,
@@ -242,3 +242,7 @@ list_climate_rasters <- function(raster_dir, variable, out_list = TRUE) {
     return(df)
   }
 }
+
+#' @export
+#' @rdname fetch_climate
+download_climate_data <- fetch_climate

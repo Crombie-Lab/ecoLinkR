@@ -52,14 +52,14 @@
 #' r_ppt <- terra::rast("data/processed/prism_ppt.tif")
 #'
 #' # Create map with default settings
-#' map_climate_raster(
+#' plot_collections_raster(
 #'   raster_list = list(Temperature = r_tmean, Precipitation = r_ppt),
 #'   collection_df = my_sites,
 #'   show_rasters = "Temperature"
 #' )
 #'
 #' # Create map with species coloring and save
-#' map_climate_raster(
+#' plot_collections_raster(
 #'   raster_list = list(r_tmean, r_ppt),
 #'   collection_df = my_sites,
 #'   species_col = "species_id",
@@ -69,7 +69,7 @@
 #' }
 #'
 #' @export
-map_climate_raster <- function(
+plot_collections_raster <- function(
     raster_list,
     collection_df,
     lat_col = NULL,
