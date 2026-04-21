@@ -1,48 +1,62 @@
-#' Download or locate climate raster data
+#' Download and process climate raster tiles
 #'
-#' Downloads climate data from PRISM or returns paths to existing raster files.
-#' This function provides a convenient interface to obtain climate data (temperature,
-#' precipitation, etc.) for a specified geographic area and time period.
+#' Downloads daily climate data from PRISM, stacks across a date range, crops to a
+#' region of interest, calculates temporal summaries (mean for temperature, mean
+#' for precipitation), and writes processed GeoTIF tiles ready for mapping and analysis.
 #'
-#' Currently supports:
-#' - **PRISM**: Mean daily temperature and precipitation (requires \pkg{prism} package)
-#' - **Existing files**: Returns paths to manually downloaded rasters in a directory
+#' The function:
+#' 1. Downloads daily PRISM raster data for specified dates
+#' 2. Stacks all daily rasters for the period
+#' 3. Crops to user-specified latitude/longitude bounds
+#' 4. Calculates temporal mean (across dates) for each variable
+#' 5. Writes high-quality GeoTIFF output files
 #'
-#' If `use_prism = TRUE`, the \pkg{prism} package must be installed. For offline
-#' use or when PRISM is unavailable, provide a directory with existing GeoTIFF files.
+#' Requires the \pkg{prism} and \pkg{terra} packages.
 #'
-#' @param variable Character. Climate variable(s) to download: `"tmean"` (mean temperature),
-#'   `"ppt"` (precipitation), or a vector of both `c("tmean", "ppt")`.
+#' @param variable Character. Climate variable(s): `"tmean"` (mean daily temperature),
+#'   `"ppt"` (precipitation), or `c("tmean", "ppt")` for both.
 #' @param start_date Character in format `"YYYY-MM-DD"`. Start date for climate period.
 #' @param end_date Character in format `"YYYY-MM-DD"`. End date for climate period.
-#' @param use_prism Logical. If `TRUE`, attempt to download from PRISM. If `FALSE`,
-#'   look for existing rasters in `raster_dir` (default: `TRUE`).
-#' @param raster_dir Character. Directory containing existing raster files or where
-#'   downloaded files will be saved. If `NULL`, uses a temporary directory.
-#' @param out_list Logical. If `TRUE`, return a named list of raster paths.
-#'   If `FALSE`, return a data frame. (default: `TRUE`)
+#' @param lat_min Numeric. Minimum latitude for cropping (required).
+#' @param lat_max Numeric. Maximum latitude for cropping (required).
+#' @param lon_min Numeric. Minimum longitude for cropping (required).
+#' @param lon_max Numeric. Maximum longitude for cropping (required).
+#' @param out_dir Character. Directory where processed GeoTIFF tiles will be saved.
+#'   If `NULL`, uses `tempdir()`. Default: `NULL`.
+#' @param resolution Character. PRISM resolution: `"800m"` (daily 800m) or `"4km"` 
+#'   (coarser, more complete). Default: `"800m"`.
+#' @param overwrite Logical. If `TRUE`, overwrite existing output files. Default: `FALSE`.
+#' @param out_list Logical. If `TRUE` (default), return a named list of output paths.
+#'   If `FALSE`, return a data frame with columns `variable`, `path`, `date_range`.
 #'
-#' @return If `out_list = TRUE`: A named list of paths to raster files
-#'   (e.g., `list(tmean = path1, ppt = path2)`).\cr
+#' @return If `out_list = TRUE`: A named list with elements `tmean` and/or `ppt`
+#'   containing paths to the output GeoTIFF files.\cr
 #'   If `out_list = FALSE`: A data frame with columns `variable`, `path`, `date_range`.
+#'
+#' @details
+#' Output GeoTIFF files are named with the pattern:
+#' `prism_mean_{variable}_{start_date}_{end_date}.tif`
+#' and contain raster data cropped to your specified region with values representing
+#' the mean across all days in the date range.
 #'
 #' @examples
 #' \dontrun{
-#' # Download PRISM data and save to a directory
-#' clim_data <- fetch_climate(
+#' # Download PRISM data, crop to Miami region, average over 3 months
+#' clim_tiles <- fetch_climate(
 #'   variable = c("tmean", "ppt"),
 #'   start_date = "2024-11-01",
 #'   end_date = "2025-02-01",
-#'   raster_dir = "data/climate",
-#'   use_prism = TRUE
+#'   lat_min = 28.00,
+#'   lat_max = 28.40,
+#'   lon_min = -80.63,
+#'   lon_max = -80.60,
+#'   out_dir = "data/climate/processed",
+#'   resolution = "800m"
 #' )
 #'
-#' # Use existing rasters from a directory
-#' clim_data <- fetch_climate(
-#'   variable = c("tmean", "ppt"),
-#'   raster_dir = "data/processed",
-#'   use_prism = FALSE
-#' )
+#' # Use the output in mapping
+#' r_temp <- terra::rast(clim_tiles$tmean)
+#' r_precip <- terra::rast(clim_tiles$ppt)
 #' }
 #'
 #' @export
@@ -50,197 +64,291 @@ fetch_climate <- function(
     variable = c("tmean", "ppt"),
     start_date = NULL,
     end_date = NULL,
-    use_prism = FALSE,
-    raster_dir = NULL,
+    lat_min = NULL,
+    lat_max = NULL,
+    lon_min = NULL,
+    lon_max = NULL,
+    out_dir = NULL,
+    resolution = "800m",
+    overwrite = FALSE,
     out_list = TRUE
 ) {
 
-  # ---- validation ----
-  if (length(variable) == 0) {
-    stop("At least one variable must be specified.")
+  # ---- Validation ----
+  if (is.null(start_date) || is.null(end_date)) {
+    stop("start_date and end_date are required (format: 'YYYY-MM-DD')")
+  }
+
+  if (is.null(lat_min) || is.null(lat_max) || is.null(lon_min) || is.null(lon_max)) {
+    stop("All of lat_min, lat_max, lon_min, lon_max are required for cropping")
+  }
+
+  if (!(is.numeric(lat_min) && is.numeric(lat_max) && is.numeric(lon_min) && is.numeric(lon_max))) {
+    stop("lat_min, lat_max, lon_min, lon_max must all be numeric")
+  }
+
+  if (lat_min >= lat_max) {
+    stop("lat_min must be less than lat_max")
+  }
+
+  if (lon_min >= lon_max) {
+    stop("lon_min must be less than lon_max")
+  }
+
+  # Validate dates
+  start <- tryCatch(as.Date(start_date), error = function(e) NA)
+  end <- tryCatch(as.Date(end_date), error = function(e) NA)
+
+  if (is.na(start) || is.na(end)) {
+    stop("start_date and end_date must be valid dates in 'YYYY-MM-DD' format")
+  }
+
+  if (start > end) {
+    stop("start_date must be before or equal to end_date")
   }
 
   variable <- match.arg(variable, c("tmean", "ppt"), several.ok = TRUE)
 
-  # ---- check for prism package if use_prism = TRUE ----
-  if (use_prism) {
-    if (!requireNamespace("prism", quietly = TRUE)) {
-      stop("The 'prism' package is required to download PRISM data.\n",
-           "Install it with: install.packages('prism')")
-    }
-    
-    if (!requireNamespace("terra", quietly = TRUE)) {
-      stop("The 'terra' package is required for processing rasters.\n",
-           "Install it with: install.packages('terra')")
-    }
-
-    if (is.null(start_date) || is.null(end_date)) {
-      stop("start_date and end_date are required when use_prism = TRUE")
-    }
-
-    # Convert dates
-    start <- as.Date(start_date)
-    end <- as.Date(end_date)
-
-    if (is.na(start) || is.na(end)) {
-      stop("start_date and end_date must be valid dates in 'YYYY-MM-DD' format")
-    }
-
-    # Setup download directory
-    if (is.null(raster_dir)) {
-      raster_dir <- tempdir()
-    }
-    
-    if (!dir.exists(raster_dir)) {
-      dir.create(raster_dir, recursive = TRUE)
-    }
-
-    # Set prism download directory
-    prism::prism_set_dl_dir(raster_dir)
-
-    # Download and process each variable
-    results <- list()
-    
-    for (var in variable) {
-      message("Downloading PRISM ", var, " data from ", start_date, " to ", end_date, "...")
-      
-      prism_var <- switch(var,
-                         tmean = "tmean",
-                         ppt = "ppt",
-                         stop("Unknown variable: ", var))
-
-      # Download daily data
-      tryCatch({
-        prism::get_prism_dailys(
-          type = prism_var,
-          minDate = start,
-          maxDate = end,
-          keepZip = FALSE
-        )
-
-        message("Download complete. Searching for raster files...")
-
-        # After download, search the prism data directory for the downloaded files
-        # Get the prism data directory
-        prism_data_dir <- prism::prism_get_dl_dir()
-        
-        # Search recursively for raster files matching this variable
-        all_files <- list.files(
-          prism_data_dir,
-          pattern = paste0(prism_var, ".*\\.(bil|tif|tiff)$"),
-          full.names = TRUE,
-          recursive = TRUE,
-          ignore.case = TRUE
-        )
-        
-        if (length(all_files) == 0) {
-          warning("No PRISM files found for variable: ", var, 
-                  " in directory: ", prism_data_dir)
-          next
-        }
-
-        message("Found ", length(all_files), " raster files for ", var)
-        
-        # Stack rasters
-        tryCatch({
-          r_stack <- terra::rast(all_files)
-          
-          # Calculate mean across time period
-          r_mean <- terra::mean(r_stack, na.rm = TRUE)
-
-          # Save as GeoTIFF
-          out_file <- file.path(raster_dir, paste0("prism_mean_", var, "_", 
-                                                     gsub("-", "", start_date), "_",
-                                                     gsub("-", "", end_date), ".tif"))
-          terra::writeRaster(r_mean, out_file, overwrite = TRUE)
-          
-          results[[var]] <- out_file
-          message("Saved: ", out_file)
-        }, error = function(e) {
-          warning("Error stacking or saving rasters for ", var, ": ", e$message)
-        })
-
-      }, error = function(e) {
-        warning("Failed to download/process ", var, ": ", e$message)
-      })
-    }
-
-    if (length(results) == 0) {
-      stop("No PRISM data successfully downloaded.")
-    }
-
-    if (out_list) {
-      return(results)
-    } else {
-      df <- data.frame(
-        variable = names(results),
-        path = unlist(results, use.names = FALSE),
-        date_range = paste0(start_date, " to ", end_date),
-        stringsAsFactors = FALSE
-      )
-      return(df)
-    }
-
-  } else {
-    # ---- use existing rasters ----
-    if (is.null(raster_dir)) {
-      stop("raster_dir must be provided when use_prism = FALSE")
-    }
-
-    if (!dir.exists(raster_dir)) {
-      stop("raster_dir not found: ", raster_dir)
-    }
-
-    return(list_climate_rasters(raster_dir = raster_dir, variable = variable, out_list = out_list))
-  }
-}
-
-
-# ---- Helper function to list and return climate rasters ----
-list_climate_rasters <- function(raster_dir, variable, out_list = TRUE) {
-  # Find raster files (GeoTIFF, BIL, and other common formats)
-  # Search recursively to find files in subdirectories (e.g., PRISM date folders)
-  raster_files <- list.files(
-    raster_dir,
-    pattern = "\\.(tif|tiff|TIF|TIFF|bil|BIL|img|IMG|grd|GRD)$",
-    full.names = TRUE,
-    recursive = TRUE
-  )
-
-  if (length(raster_files) == 0) {
-    warning("No raster files found in: ", raster_dir)
-    if (out_list) return(list()) else return(data.frame())
+  if (!requireNamespace("prism", quietly = TRUE)) {
+    stop("The 'prism' package is required. Install with: install.packages('prism')")
   }
 
-  # Try to match raster files to requested variables
+  if (!requireNamespace("terra", quietly = TRUE)) {
+    stop("The 'terra' package is required. Install with: install.packages('terra')")
+  }
+
+  # ---- Setup ----
+  if (is.null(out_dir)) {
+    out_dir <- tempdir()
+  }
+
+  if (!dir.exists(out_dir)) {
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  }
+
+  # Temporary directory for raw PRISM downloads
+  dl_dir <- file.path(out_dir, "raw_prism_download")
+  if (!dir.exists(dl_dir)) {
+    dir.create(dl_dir, recursive = TRUE, showWarnings = FALSE)
+  }
+
+  prism::prism_set_dl_dir(dl_dir)
+
+  # Increase download timeout for large PRISM requests (PRISM uses download.file internally)
+  old_timeout <- getOption("timeout")
+  options(timeout = max(300, old_timeout))
+  on.exit(options(timeout = old_timeout), add = TRUE)
+
+  # Bounding box for cropping
+  roi <- terra::ext(lon_min, lon_max, lat_min, lat_max)
+
   results <- list()
+
+  # ---- Process each variable ----
   for (var in variable) {
-    pattern <- switch(var,
-                     tmean = "tmean|temp|temperature",
-                     ppt = "ppt|precip|precipitation",
-                     var)
+    message("Processing PRISM ", var, " from ", start_date, " to ", end_date, "...")
 
-    matching <- raster_files[grepl(pattern, raster_files, ignore.case = TRUE)]
+    prism_var <- switch(var,
+      tmean = "tmean",
+      ppt = "ppt",
+      stop("Unknown variable: ", var)
+    )
 
-    if (length(matching) == 0) {
-      warning("No raster file found matching variable: ", var)
-    } else {
-      # Take the first match (or modify logic if multiple time periods needed)
-      results[[var]] <- matching[1]
-    }
+    tryCatch({
+      # Download daily data (retry up to 3 times with backoff)
+      message("  Downloading ", prism_var, " daily data...")
+
+      max_retries <- 3
+      download_result <- FALSE
+      for (attempt in seq_len(max_retries)) {
+        if (attempt > 1) {
+          wait_secs <- 15 * (attempt - 1)
+          message("  Retry attempt ", attempt, " of ", max_retries,
+                  " for ", var, " (waiting ", wait_secs, "s)...")
+          Sys.sleep(wait_secs)
+        }
+        download_result <- tryCatch({
+          prism::get_prism_dailys(
+            type = prism_var,
+            minDate = start,
+            maxDate = end,
+            keepZip = FALSE
+          )
+          TRUE
+        }, error = function(e) {
+          message("    Download error (attempt ", attempt, "): ", e$message)
+          FALSE
+        })
+        if (download_result) break
+      }
+
+      if (!download_result) {
+        warning("Failed to download ", var, " data after ", max_retries, " attempts")
+        next
+      }
+
+      # Get downloaded files directly from the download directory
+      message("  Locating downloaded raster files...")
+      
+      # Look for .bil files (raw PRISM) in the download directory
+      # They may be in nested subdirectories like prism_tmean_us_25m_20241101/
+      all_bil_files <- list.files(
+        dl_dir,
+        pattern = "\\.bil$",
+        full.names = TRUE,
+        recursive = TRUE,
+        ignore.case = TRUE
+      )
+      
+      if (length(all_bil_files) == 0) {
+        warning("No PRISM .bil files found in download directory: ", dl_dir)
+        next
+      }
+      
+      # Filter for the current variable
+      # Match files that contain tmean or ppt in their filename
+      if (prism_var == "tmean") {
+        pattern <- "tmean"
+      } else if (prism_var == "ppt") {
+        pattern <- "ppt"
+      } else {
+        pattern <- prism_var
+      }
+      
+      prism_files <- all_bil_files[grepl(pattern, basename(all_bil_files), ignore.case = TRUE)]
+      
+      if (length(prism_files) == 0) {
+        warning("No files matching variable '", var, "' found. ",
+                "Looking for files with '", pattern, "' in name.")
+        message("Available files: ", paste(head(basename(all_bil_files), 5), collapse = ", "))
+        next
+      }
+      
+      message("  Found ", length(prism_files), " raster files for ", var)
+
+      # Load and crop all rasters individually
+      message("  Loading and cropping ", length(prism_files), " daily rasters...")
+      cropped_rasters <- list()
+      
+      for (i in seq_along(prism_files)) {
+        r <- tryCatch({
+          r_raw <- terra::rast(prism_files[i])
+          terra::crop(r_raw, roi)
+        }, error = function(e) {
+          warning("Failed to load/crop raster ", i, ": ", e$message)
+          return(NULL)
+        })
+        
+        if (!is.null(r)) {
+          cropped_rasters[[i]] <- r
+        }
+      }
+      
+      if (length(cropped_rasters) == 0) {
+        warning("No rasters were successfully loaded/cropped for ", var)
+        next
+      }
+      
+      message("  Resampling all rasters to common grid...")
+      
+      # Use the first raster as the reference grid
+      reference <- cropped_rasters[[1]]
+      resampled_rasters <- list(reference)
+      
+      if (length(cropped_rasters) > 1) {
+        # Resample remaining rasters to match the first one
+        for (i in 2:length(cropped_rasters)) {
+          r_resampled <- tryCatch({
+            terra::resample(cropped_rasters[[i]], reference, method = "bilinear")
+          }, error = function(e) {
+            warning("Failed to resample raster ", i, ": ", e$message)
+            return(NULL)
+          })
+          
+          if (!is.null(r_resampled)) {
+            resampled_rasters[[i]] <- r_resampled
+          }
+        }
+      }
+      
+      if (length(resampled_rasters) < 1) {
+        warning("No rasters available for ", var)
+        next
+      }
+      
+      message("  Stacking ", length(resampled_rasters), " aligned rasters...")
+      r_stack <- tryCatch({
+        terra::rast(resampled_rasters)
+      }, error = function(e) {
+        warning("Failed to stack rasters for ", var, ": ", e$message)
+        return(NULL)
+      })
+      
+      if (is.null(r_stack)) {
+        next
+      }
+
+      # Calculate temporal mean
+      message("  Calculating temporal mean...")
+      r_mean <- tryCatch({
+        terra::mean(r_stack, na.rm = TRUE)
+      }, error = function(e) {
+        warning("Failed to calculate mean for ", var, ": ", e$message)
+        return(NULL)
+      })
+      
+      if (is.null(r_mean)) {
+        next
+      }
+
+      # Build output filename
+      out_file <- file.path(
+        out_dir,
+        paste0(
+          "prism_mean_", var, "_",
+          gsub("-", "", start_date), "_",
+          gsub("-", "", end_date),
+          ".tif"
+        )
+      )
+
+      # Write GeoTIFF
+      message("  Writing output raster...")
+      write_result <- tryCatch({
+        terra::writeRaster(r_mean, out_file, overwrite = overwrite)
+        TRUE
+      }, error = function(e) {
+        warning("Failed to write raster for ", var, ": ", e$message)
+        FALSE
+      })
+      
+      if (!write_result) {
+        next
+      }
+      
+      message("  Saved: ", out_file)
+      results[[var]] <- out_file
+
+    }, error = function(e) {
+      warning("Failed to process ", var, ": ", e$message)
+    })
   }
 
+  if (length(results) == 0) {
+    stop("No climate data successfully processed")
+  }
+
+  # ---- Return ----
   if (out_list) {
     return(results)
-  } else {
-    # Convert to data frame
-    df <- data.frame(
-      variable = names(results),
-      path = unlist(results, use.names = FALSE),
-      stringsAsFactors = FALSE
-    )
-    return(df)
   }
+
+  data.frame(
+    variable = names(results),
+    path = unlist(results, use.names = FALSE),
+    date_range = paste0(start_date, " to ", end_date),
+    stringsAsFactors = FALSE
+  )
 }
 
 #' @export

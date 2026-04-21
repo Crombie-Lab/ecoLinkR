@@ -30,6 +30,9 @@
 #'   If `NULL`, map is displayed but not saved.
 #' @param title Character. Map title displayed in the upper left.
 #'   Default: `"Climate & Collection Sites"`.
+#' @param max_bytes Numeric. Maximum bytes allowed for raster image rendering in
+#'   leaflet. Higher values produce sharper maps at the cost of file size.
+#'   Default: `16 * 1024^2` (16 MB). The leaflet package default is 4 MB.
 #'
 #' @return A leaflet map object (invisibly). If `out_html` is provided,
 #'   the map is also saved to that HTML file.
@@ -81,7 +84,8 @@ plot_collections_raster <- function(
     species_colors = NULL,
     show_rasters = NULL,
     out_html = NULL,
-    title = "Climate & Collection Sites"
+    title = "Climate & Collection Sites",
+    max_bytes = 16 * 1024^2
 ) {
 
   # ---- validation ----
@@ -252,7 +256,8 @@ plot_collections_raster <- function(
         r,
         colors = pal,
         opacity = opacity,
-        group = layer_name
+        group = layer_name,
+        maxBytes = max_bytes
       )
   }
 

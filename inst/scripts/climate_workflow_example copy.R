@@ -6,11 +6,10 @@
 # 3. Joining climate data to collection data
 # 4. Visualizing climate and collection data on an interactive map
 #
-# Last updated: 2026-04-02
+# Last updated: 2026-04-15 (fixed for correct value extraction)
 library(devtools)
 load_all()
 
-library(ecolinkR)
 library(dplyr)
 library(terra)
 library(prism)
@@ -19,51 +18,68 @@ library(prism)
 # STEP 1: Obtain climate raster data
 # ============================================================
 
-# Option A: Point to existing raster files in a directory
-# clim_data <- download_climate_data(
-#  variable = c("tmean", "ppt"),
-#  raster_dir = "/Users/lainieboldus/Desktop/Crombie Lab/fl_climate/data/raw",  # <- Change to your raster directory
-#  use_prism = FALSE
-# )
+# Download PRISM data for date range, crop to ROI, calculate mean
+# Note: PRISM data has a processing lag; use dates at least 1-2 weeks old
+message("Starting climate data fetch...")
+message("Date range: 2024-11-01 to 2025-02-01")
+message("Region: lat [27.95, 28.10], lon [-80.67, -80.55]")
 
-# Option B: Download from PRISM (requires prism package)
-clim_data <- download_climate_data(
+# Start with just tmean to test
+clim_data <- fetch_climate(
   variable = c("tmean", "ppt"),
   start_date = "2024-11-01",
   end_date = "2025-02-01",
-  raster_dir = "/Users/lainieboldus/Desktop/Crombie Lab/climate_test/data/raw",
-  use_prism = TRUE  # Set to TRUE to download from PRISM
+  lat_min = 27.95,
+  lat_max = 28.10,
+  lon_min = -80.67,
+  lon_max = -80.55,
+  out_dir = "/Users/lainieboldus/Desktop/Crombie Lab/climate_test/data/processed",
+  resolution = "800m",
+  overwrite = TRUE,
+  out_list = TRUE
 )
 
-str(clim_data)
+# Check that rasters were created
+message("Result:")
+print(clim_data)
+
+if (is.null(clim_data$tmean) || is.null(clim_data$ppt)) {
+  stop("Failed to create climate rasters. Check the error messages above.")
+}
+
+message("Climate tiles created successfully!")
 
 # ============================================================
 # STEP 2: Load rasters into memory
 # ============================================================
 
+if (!file.exists(clim_data$tmean) || !file.exists(clim_data$ppt)) {
+  stop("One or more raster files do not exist. Check paths: ", 
+       clim_data$tmean, " and ", clim_data$ppt)
+}
+
 r_tmean <- terra::rast(clim_data$tmean)
 r_ppt <- terra::rast(clim_data$ppt)
 
 # Check raster metadata
-terra::crs(r_tmean)
-terra::ext(r_tmean)
-terra::nlyr(r_tmean)
+print(terra::crs(r_tmean))
+print(terra::ext(r_tmean))
+print(terra::nlyr(r_tmean))
 
 # ============================================================
 # STEP 3: Load your collection data
 # ============================================================
 
-# Load from CSV (example)
 collection_data <- readr::read_csv("/Users/lainieboldus/Desktop/Crombie Lab/wnc_data25:26/full6collections.csv")
 
 # Check for required columns
-head(collection_data[, c("c_label", "GPSLatitude", "GPSLongitude")])
+stopifnot(all(c("c_label", "GPSLatitude", "GPSLongitude") %in% names(collection_data)))
 
 # ============================================================
 # STEP 4: Extract climate values at collection sites
 # ============================================================
 
-climate_extracted <- extract_climate_values(
+climate_extracted <- ecoLinkR::extract_climate(
   raster_paths = c(clim_data$tmean, clim_data$ppt),
   collection_df = collection_data,
   lat_col = "GPSLatitude",
@@ -74,13 +90,13 @@ climate_extracted <- extract_climate_values(
   out_csv = "/Users/lainieboldus/Desktop/Crombie Lab/climate_test/data/processed/extracted_climate_values.csv"
 )
 
-head(climate_extracted)
+print(head(climate_extracted))
 
 # ============================================================
 # STEP 5: Join climate data to collection data
 # ============================================================
 
-collection_with_climate <- join_climate_to_collection(
+collection_with_climate <- ecoLinkR::join_climate(
   collection_df = collection_data,
   climate_df = climate_extracted,
   by = "c_label",
@@ -89,14 +105,13 @@ collection_with_climate <- join_climate_to_collection(
   verbose = TRUE
 )
 
-# Check result
-head(collection_with_climate[, c("c_label", "species_id", "mean_temp_celsius", "mean_precip_mm")])
+print(head(collection_with_climate[, c("c_label", "species_id", "mean_temp_celsius", "mean_precip_mm")]))
 
 # ============================================================
 # STEP 6: Visualize climate and collection sites on map
 # ============================================================
 
-map_climate_raster(
+ecoLinkR::plot_collections_raster(
   raster_list = list(Temperature_C = r_tmean, Precipitation_mm = r_ppt),
   collection_df = collection_data,
   lat_col = "GPSLatitude",
@@ -145,4 +160,4 @@ ggplot(collection_with_climate, aes(x = mean_temp_celsius, y = mean_precip_mm, c
     color = "Species"
   )
 
-ggsave("plots/temp_vs_precip.pdf", width = 8, height = 6)
+ggsave("/Users/lainieboldus/Desktop/Crombie Lab/climate_test/plots/temp_vs_precip.pdf", width = 8, height = 6)

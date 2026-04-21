@@ -18,3 +18,7 @@ test()
 rename_files("map_climate_raster","plot_collections_raster")
 use_test("plot_collections_raster")
 test()
+
+library(devtools)
+load_all()
+document()

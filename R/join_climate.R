@@ -11,7 +11,7 @@
 #'
 #' @param collection_df Data frame. The original collection data with GPS and other
 #'   site information. Must contain a column specified by `by` parameter.
-#' @param climate_df Data frame. Output from `extract_climate_values()`.
+#' @param climate_df Data frame. Output from `extract_climate()`.
 #'   Must contain columns `c_label`, climate variables, and coordinates.
 #' @param by Character. Column name to join on. Default: `"c_label"`.
 #' @param join_type Character. Type of join: `"left"` (default, keep all collection rows),
@@ -35,7 +35,7 @@
 #' @examples
 #' \dontrun{
 #' # Join extracted climate to collection data
-#' collection_with_climate <- join_climate_to_collection(
+#' collection_with_climate <- join_climate(
 #'   collection_df = my_collection_data,
 #'   climate_df = extracted_climate,
 #'   by = "c_label",
@@ -43,7 +43,7 @@
 #' )
 #'
 #' # Save to file
-#' join_climate_to_collection(
+#' join_climate(
 #'   collection_df = my_collection_data,
 #'   climate_df = extracted_climate,
 #'   out_csv = "data/processed/collection_with_climate.csv"
@@ -51,7 +51,7 @@
 #' }
 #'
 #' @export
-join_climate_to_collection <- function(
+join_climate <- function(
     collection_df,
     climate_df,
     by = "c_label",

@@ -3,14 +3,19 @@
 \name{fetch_climate}
 \alias{fetch_climate}
 \alias{download_climate_data}
-\title{Download or locate climate raster data}
+\title{Download and process climate raster tiles}
 \usage{
 fetch_climate(
   variable = c("tmean", "ppt"),
   start_date = NULL,
   end_date = NULL,
-  use_prism = FALSE,
-  raster_dir = NULL,
+  lat_min = NULL,
+  lat_max = NULL,
+  lon_min = NULL,
+  lon_max = NULL,
+  out_dir = NULL,
+  resolution = "800m",
+  overwrite = FALSE,
   out_list = TRUE
 )
 
@@ -18,63 +23,87 @@ download_climate_data(
   variable = c("tmean", "ppt"),
   start_date = NULL,
   end_date = NULL,
-  use_prism = FALSE,
-  raster_dir = NULL,
+  lat_min = NULL,
+  lat_max = NULL,
+  lon_min = NULL,
+  lon_max = NULL,
+  out_dir = NULL,
+  resolution = "800m",
+  overwrite = FALSE,
   out_list = TRUE
 )
 }
 \arguments{
-\item{variable}{Character. Climate variable(s) to download: `"tmean"` (mean temperature),
-`"ppt"` (precipitation), or a vector of both `c("tmean", "ppt")`.}
+\item{variable}{Character. Climate variable(s): `"tmean"` (mean daily temperature),
+`"ppt"` (precipitation), or `c("tmean", "ppt")` for both.}
 
-\item{start_date}{Character in format `"YYYY-MM-DD"`. Start date for climate period.}
+\item{start_date}{Character in format `"YYYY-MM-DD"`. Start date for climate period (required).}
 
-\item{end_date}{Character in format `"YYYY-MM-DD"`. End date for climate period.}
+\item{end_date}{Character in format `"YYYY-MM-DD"`. End date for climate period (required).}
 
-\item{use_prism}{Logical. If `TRUE`, attempt to download from PRISM. If `FALSE`,
-look for existing rasters in `raster_dir` (default: `TRUE`).}
+\item{lat_min}{Numeric. Minimum latitude for cropping region (required).}
 
-\item{raster_dir}{Character. Directory containing existing raster files or where
-downloaded files will be saved. If `NULL`, uses a temporary directory.}
+\item{lat_max}{Numeric. Maximum latitude for cropping region (required).}
 
-\item{out_list}{Logical. If `TRUE`, return a named list of raster paths.
-If `FALSE`, return a data frame. (default: `TRUE`)}
+\item{lon_min}{Numeric. Minimum longitude for cropping region (required).}
+
+\item{lon_max}{Numeric. Maximum longitude for cropping region (required).}
+
+\item{out_dir}{Character. Directory where processed GeoTIFF tiles will be saved.
+If `NULL`, uses `tempdir()`.}
+
+\item{resolution}{Character. PRISM resolution: `"800m"` (daily 800m, default) or 
+`"4km"` (coarser, more complete historical data).}
+
+\item{overwrite}{Logical. If `TRUE`, overwrite existing output files (default: `FALSE`).}
+
+\item{out_list}{Logical. If `TRUE` (default), return a named list of output raster paths.
+If `FALSE`, return a data frame with columns `variable`, `path`, `date_range`.}
 }
 \value{
-If `out_list = TRUE`: A named list of paths to raster files
-  (e.g., `list(tmean = path1, ppt = path2)`).\cr
+If `out_list = TRUE`: A named list with elements `tmean` and/or `ppt` 
+  containing paths to the output GeoTIFF files ready for use with mapping functions.\cr
   If `out_list = FALSE`: A data frame with columns `variable`, `path`, `date_range`.
 }
 \description{
-Downloads climate data from PRISM or returns paths to existing raster files.
-This function provides a convenient interface to obtain climate data (temperature,
-precipitation, etc.) for a specified geographic area and time period.
+Downloads daily climate data from PRISM, stacks across a date range, crops to a
+region of interest, calculates temporal mean, and writes processed GeoTIFF tiles
+ready for mapping and analysis.
 }
 \details{
-Currently supports:
-- **PRISM**: Mean daily temperature and precipitation (requires \pkg{prism} package)
-- **Existing files**: Returns paths to manually downloaded rasters in a directory
+The function:
+\enumerate{
+  \item Downloads daily PRISM raster data for specified dates
+  \item Stacks all daily rasters for the period
+  \item Crops to user-specified latitude/longitude bounds
+  \item Calculates temporal mean (across all dates) for each variable
+  \item Writes high-quality GeoTIFF output files suitable for mapping
+}
 
-If `use_prism = TRUE`, the \pkg{prism} package must be installed. For offline
-use or when PRISM is unavailable, provide a directory with existing GeoTIFF files.
+Output files are named: `prism_mean_{variable}_{start_date}_{end_date}.tif` and contain
+raster values representing the mean across all days in the date range.
+
+Requires the \pkg{prism} and \pkg{terra} packages.
 }
 \examples{
 \dontrun{
-# Download PRISM data and save to a directory
-clim_data <- fetch_climate(
+# Download PRISM data for Miami region, average over 3 months
+clim_tiles <- fetch_climate(
   variable = c("tmean", "ppt"),
   start_date = "2024-11-01",
   end_date = "2025-02-01",
-  raster_dir = "data/climate",
-  use_prism = TRUE
+  lat_min = 28.00,
+  lat_max = 28.40,
+  lon_min = -80.63,
+  lon_max = -80.60,
+  out_dir = "data/climate/processed",
+  resolution = "800m",
+  overwrite = TRUE
 )
 
-# Use existing rasters from a directory
-clim_data <- fetch_climate(
-  variable = c("tmean", "ppt"),
-  raster_dir = "data/processed",
-  use_prism = FALSE
-)
+# Use the output rasters in mapping
+r_temp <- terra::rast(clim_tiles$tmean)
+r_precip <- terra::rast(clim_tiles$ppt)
 }
 
 }
