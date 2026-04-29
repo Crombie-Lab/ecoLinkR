@@ -2,6 +2,7 @@
 % Please edit documentation in R/join_climate.R
 \name{join_climate}
 \alias{join_climate}
+\alias{join_climate_to_collection}
 \title{Join climate data to collection data with clear keys}
 \usage{
 join_climate(
@@ -12,6 +13,8 @@ join_climate(
   out_csv = NULL,
   verbose = FALSE
 )
+
+join_climate_to_collection(...)
 }
 \arguments{
 \item{collection_df}{Data frame. The original collection data with GPS and other

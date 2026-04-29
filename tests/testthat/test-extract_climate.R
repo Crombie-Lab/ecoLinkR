@@ -1,407 +1,360 @@
-# Tests for extract_climate_values function
+# Tests for extract_climate function
 
-test_that("extract_climate_values extracts values from single raster", {
-  skip_if_not_installed("terra")
+# ── helpers ──────────────────────────────────────────────────────────────────
+make_raster <- function(values = runif(100), ext = terra::ext(-80, -70, 25, 35)) {
+  terra::rast(matrix(values, ncol = 10), extent = ext, crs = "EPSG:4326")
+}
 
-  # Create mock raster with known values
-  r <- terra::rast(
-    matrix(1:100, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
+make_lulc_raster <- function(ext = terra::ext(-80, -70, 25, 35)) {
+  # Fill with ESA class 10 (Tree Cover) — a valid known value
+  terra::rast(matrix(rep(10L, 100), ncol = 10), extent = ext, crs = "EPSG:4326")
+}
 
-  temp_raster <- tempfile(fileext = ".tif")
-  terra::writeRaster(r, temp_raster, overwrite = TRUE)
-
-  # Create collection data with points inside raster extent
-  collection <- data.frame(
-    c_label = c("site1", "site2", "site3"),
-    GPSLatitude = c(28.5, 29.5, 30.5),
+base_collection <- function() {
+  data.frame(
+    c_label      = c("C1", "C2", "C3"),
+    GPSLatitude  = c(28.5, 29.5, 30.5),
     GPSLongitude = c(-79.5, -78.5, -77.5)
   )
+}
 
-  result <- extract_climate_values(
-    raster_paths = temp_raster,
-    collection_df = collection,
+# ── basic extraction ──────────────────────────────────────────────────────────
+
+test_that("extracts values from single raster at points", {
+  skip_if_not_installed("terra")
+
+  tmp <- tempfile(fileext = ".tif")
+  on.exit(unlink(tmp))
+  terra::writeRaster(make_raster(1:100), tmp, overwrite = TRUE)
+
+  result <- extract_climate(
+    raster_paths = tmp,
+    collection_df = base_collection(),
     lat_col = "GPSLatitude",
     lon_col = "GPSLongitude",
     label_col = "c_label"
   )
 
-  expect_true(nrow(result) == 3)
+  expect_equal(nrow(result), 3)
   expect_true("c_label" %in% names(result))
-  expect_true(ncol(result) >= 2)  # Should have label and at least one value column
-
-  unlink(temp_raster)
+  expect_true("c_latitude" %in% names(result))
+  expect_true("c_longitude" %in% names(result))
 })
 
-test_that("extract_climate_values extracts from multiple rasters", {
+test_that("extracts from multiple rasters with var_names", {
   skip_if_not_installed("terra")
 
-  # Create two mock rasters
-  r1 <- terra::rast(
-    matrix(runif(100), ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-  r2 <- terra::rast(
-    matrix(runif(100) * 100, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
+  tmp1 <- tempfile(fileext = ".tif"); on.exit(unlink(tmp1), add = TRUE)
+  tmp2 <- tempfile(fileext = ".tif"); on.exit(unlink(tmp2), add = TRUE)
+  terra::writeRaster(make_raster(), tmp1, overwrite = TRUE)
+  terra::writeRaster(make_raster(runif(100) * 100), tmp2, overwrite = TRUE)
 
-  temp_r1 <- tempfile(fileext = ".tif")
-  temp_r2 <- tempfile(fileext = ".tif")
-  terra::writeRaster(r1, temp_r1, overwrite = TRUE)
-  terra::writeRaster(r2, temp_r2, overwrite = TRUE)
-
-  collection <- data.frame(
-    c_label = c("site1", "site2"),
-    GPSLatitude = c(28.5, 29.5),
-    GPSLongitude = c(-79.5, -78.5)
+  result <- extract_climate(
+    raster_paths  = c(tmp1, tmp2),
+    collection_df = base_collection(),
+    lat_col       = "GPSLatitude",
+    lon_col       = "GPSLongitude",
+    label_col     = "c_label",
+    var_names     = c("temperature", "precipitation")
   )
 
-  result <- extract_climate_values(
-    raster_paths = c(temp_r1, temp_r2),
-    collection_df = collection,
-    lat_col = "GPSLatitude",
-    lon_col = "GPSLongitude",
-    label_col = "c_label",
-    var_names = c("temperature", "precipitation")
-  )
-
-  expect_true(nrow(result) == 2)
-  expect_true("temperature" %in% names(result) || ncol(result) >= 3)
-  expect_true("precipitation" %in% names(result) || ncol(result) >= 3)
-
-  unlink(temp_r1)
-  unlink(temp_r2)
+  expect_equal(nrow(result), 3)
+  expect_true("temperature"   %in% names(result))
+  expect_true("precipitation" %in% names(result))
 })
 
-test_that("extract_climate_values auto-detects latitude column", {
+test_that("auto-detects GPSLatitude / GPSLongitude columns", {
   skip_if_not_installed("terra")
 
-  r <- terra::rast(
-    matrix(runif(100), ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
+  tmp <- tempfile(fileext = ".tif"); on.exit(unlink(tmp))
+  terra::writeRaster(make_raster(), tmp, overwrite = TRUE)
 
-  temp_raster <- tempfile(fileext = ".tif")
-  terra::writeRaster(r, temp_raster, overwrite = TRUE)
-
-  # Try different standard column names
-  collection <- data.frame(
-    c_label = "site1",
-    GPSLatitude = 28.5,
-    GPSLongitude = -79.5
-  )
-
-  result <- extract_climate_values(
-    raster_paths = temp_raster,
-    collection_df = collection,
-    label_col = "c_label"
-    # lat_col and lon_col omitted - should auto-detect
+  result <- extract_climate(
+    raster_paths  = tmp,
+    collection_df = base_collection(),
+    label_col     = "c_label"
+    # lat_col / lon_col omitted
   )
 
   expect_true(nrow(result) > 0)
-
-  unlink(temp_raster)
 })
 
-test_that("extract_climate_values handles missing raster file", {
-  collection <- data.frame(
-    c_label = "site1",
-    GPSLatitude = 28.5,
-    GPSLongitude = -79.5
+test_that("returns tibble", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("tibble")
+
+  tmp <- tempfile(fileext = ".tif"); on.exit(unlink(tmp))
+  terra::writeRaster(make_raster(), tmp, overwrite = TRUE)
+
+  result <- extract_climate(
+    raster_paths  = tmp,
+    collection_df = base_collection()[1, ],
+    lat_col       = "GPSLatitude",
+    lon_col       = "GPSLongitude",
+    label_col     = "c_label"
   )
 
+  expect_s3_class(result, "tbl_df")
+})
+
+# ── filtering & validation ────────────────────────────────────────────────────
+
+test_that("filters out rows with NA coordinates", {
+  skip_if_not_installed("terra")
+
+  tmp <- tempfile(fileext = ".tif"); on.exit(unlink(tmp))
+  terra::writeRaster(make_raster(), tmp, overwrite = TRUE)
+
+  coll <- data.frame(
+    c_label      = c("C1", "C2", "C3"),
+    GPSLatitude  = c(28.5, NA,   30.5),
+    GPSLongitude = c(-79.5, -78.5, NA)
+  )
+
+  result <- extract_climate(
+    raster_paths  = tmp,
+    collection_df = coll,
+    lat_col       = "GPSLatitude",
+    lon_col       = "GPSLongitude",
+    label_col     = "c_label"
+  )
+
+  expect_equal(nrow(result), 1)
+  expect_equal(result$c_label, "C1")
+})
+
+test_that("errors on missing raster file", {
   expect_error(
-    extract_climate_values(
-      raster_paths = "/nonexistent/file.tif",
-      collection_df = collection,
-      lat_col = "GPSLatitude",
-      lon_col = "GPSLongitude",
-      label_col = "c_label"
+    extract_climate(
+      raster_paths  = "/nonexistent/file.tif",
+      collection_df = base_collection(),
+      lat_col       = "GPSLatitude",
+      lon_col       = "GPSLongitude",
+      label_col     = "c_label"
     ),
     "not found"
   )
 })
 
-test_that("extract_climate_values handles missing lat/lon columns", {
+test_that("errors when lat column cannot be auto-detected", {
   skip_if_not_installed("terra")
 
-  r <- terra::rast(
-    matrix(runif(100), ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
+  tmp <- tempfile(fileext = ".tif"); on.exit(unlink(tmp))
+  terra::writeRaster(make_raster(), tmp, overwrite = TRUE)
 
-  temp_raster <- tempfile(fileext = ".tif")
-  terra::writeRaster(r, temp_raster, overwrite = TRUE)
-
-  # Create collection with non-standard column names
-  collection <- data.frame(
-    c_label = "site1",
-    my_lat = 28.5,
-    my_lon = -79.5
-  )
+  coll <- data.frame(c_label = "C1", my_lat = 28.5, my_lon = -79.5)
 
   expect_error(
-    extract_climate_values(
-      raster_paths = temp_raster,
-      collection_df = collection,
-      label_col = "c_label"
-      # No lat_col specified and no standard columns present
+    extract_climate(
+      raster_paths  = tmp,
+      collection_df = coll,
+      label_col     = "c_label"
     ),
     "Could not auto-detect latitude column"
   )
-
-  unlink(temp_raster)
 })
 
-test_that("extract_climate_values filters out invalid coordinates", {
+test_that("errors when var_names length mismatches raster_paths", {
   skip_if_not_installed("terra")
 
-  r <- terra::rast(
-    matrix(runif(100), ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
+  tmp <- tempfile(fileext = ".tif"); on.exit(unlink(tmp))
+  terra::writeRaster(make_raster(), tmp, overwrite = TRUE)
+
+  expect_error(
+    extract_climate(
+      raster_paths  = tmp,
+      collection_df = base_collection(),
+      lat_col       = "GPSLatitude",
+      lon_col       = "GPSLongitude",
+      label_col     = "c_label",
+      var_names     = c("a", "b")  # 2 names for 1 raster
+    ),
+    "Length of var_names"
   )
-
-  temp_raster <- tempfile(fileext = ".tif")
-  terra::writeRaster(r, temp_raster, overwrite = TRUE)
-
-  # Collection with some NA coordinates
-  collection <- data.frame(
-    c_label = c("site1", "site2", "site3"),
-    GPSLatitude = c(28.5, NA, 30.5),
-    GPSLongitude = c(-79.5, -78.5, NA)
-  )
-
-  result <- extract_climate_values(
-    raster_paths = temp_raster,
-    collection_df = collection,
-    lat_col = "GPSLatitude",
-    lon_col = "GPSLongitude",
-    label_col = "c_label"
-  )
-
-  # Should only have 1 or 2 valid sites depending on filtering
-  expect_true(nrow(result) <= 2)
-
-  unlink(temp_raster)
 })
 
-test_that("extract_climate_values writes CSV output", {
+# ── buffer extraction ─────────────────────────────────────────────────────────
+
+test_that("buffer extraction appends buffer_distance and buffer_fun columns", {
   skip_if_not_installed("terra")
 
-  r <- terra::rast(
-    matrix(runif(100), ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
+  tmp <- tempfile(fileext = ".tif"); on.exit(unlink(tmp))
+  terra::writeRaster(make_raster(1:100), tmp, overwrite = TRUE)
+
+  result <- extract_climate(
+    raster_paths    = tmp,
+    collection_df   = base_collection()[1, ],
+    lat_col         = "GPSLatitude",
+    lon_col         = "GPSLongitude",
+    label_col       = "c_label",
+    buffer_distance = 10000
   )
 
-  temp_raster <- tempfile(fileext = ".tif")
-  terra::writeRaster(r, temp_raster, overwrite = TRUE)
+  expect_true("buffer_distance" %in% names(result))
+  expect_true("buffer_fun"      %in% names(result))
+  expect_equal(result$buffer_distance, 10000)
+})
 
-  collection <- data.frame(
-    c_label = c("site1", "site2"),
-    GPSLatitude = c(28.5, 29.5),
-    GPSLongitude = c(-79.5, -78.5)
-  )
+test_that("buffer_fun options all run without error", {
+  skip_if_not_installed("terra")
 
-  out_csv <- tempfile(fileext = ".csv")
+  tmp <- tempfile(fileext = ".tif"); on.exit(unlink(tmp))
+  terra::writeRaster(make_raster(1:100), tmp, overwrite = TRUE)
 
-  result <- extract_climate_values(
-    raster_paths = temp_raster,
-    collection_df = collection,
-    lat_col = "GPSLatitude",
-    lon_col = "GPSLongitude",
-    label_col = "c_label",
-    out_csv = out_csv
+  for (fun in c("mean", "median", "min", "max", "sd")) {
+    expect_no_error(
+      extract_climate(
+        raster_paths    = tmp,
+        collection_df   = base_collection()[1, ],
+        lat_col         = "GPSLatitude",
+        lon_col         = "GPSLongitude",
+        label_col       = "c_label",
+        buffer_distance = 5000,
+        buffer_fun      = fun
+      )
+    )
+  }
+})
+
+# ── CSV output ────────────────────────────────────────────────────────────────
+
+test_that("writes CSV when out_csv is specified", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("readr")
+
+  tmp     <- tempfile(fileext = ".tif"); on.exit(unlink(tmp),     add = TRUE)
+  out_csv <- tempfile(fileext = ".csv"); on.exit(unlink(out_csv), add = TRUE)
+  terra::writeRaster(make_raster(), tmp, overwrite = TRUE)
+
+  extract_climate(
+    raster_paths  = tmp,
+    collection_df = base_collection(),
+    lat_col       = "GPSLatitude",
+    lon_col       = "GPSLongitude",
+    label_col     = "c_label",
+    out_csv       = out_csv
   )
 
   expect_true(file.exists(out_csv))
-  expect_true(file.size(out_csv) > 0)
-
-  # Read back the CSV and verify structure
-  csv_data <- readr::read_csv(out_csv, show_col_types = FALSE)
-  expect_true(nrow(csv_data) >= 1)
-  expect_true("c_label" %in% names(csv_data))
-
-  unlink(temp_raster)
-  unlink(out_csv)
+  csv_back <- readr::read_csv(out_csv, show_col_types = FALSE)
+  expect_true("c_label" %in% names(csv_back))
+  expect_equal(nrow(csv_back), 3)
 })
 
-test_that("extract_climate_values handles buffer distance", {
+# ── LULC extraction ───────────────────────────────────────────────────────────
+
+test_that("lulc_path adds lulc_value and lulc_label columns", {
   skip_if_not_installed("terra")
 
-  r <- terra::rast(
-    matrix(runif(100), ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
+  tmp_clim <- tempfile(fileext = ".tif"); on.exit(unlink(tmp_clim), add = TRUE)
+  tmp_lulc <- tempfile(fileext = ".tif"); on.exit(unlink(tmp_lulc), add = TRUE)
+  terra::writeRaster(make_raster(),       tmp_clim, overwrite = TRUE)
+  terra::writeRaster(make_lulc_raster(),  tmp_lulc, overwrite = TRUE)
+
+  result <- extract_climate(
+    raster_paths  = tmp_clim,
+    collection_df = base_collection(),
+    lat_col       = "GPSLatitude",
+    lon_col       = "GPSLongitude",
+    label_col     = "c_label",
+    lulc_path     = tmp_lulc
   )
 
-  temp_raster <- tempfile(fileext = ".tif")
-  terra::writeRaster(r, temp_raster, overwrite = TRUE)
-
-  collection <- data.frame(
-    c_label = "site1",
-    GPSLatitude = 28.5,
-    GPSLongitude = -79.5
-  )
-
-  # Extract with buffer
-  result_buffer <- extract_climate_values(
-    raster_paths = temp_raster,
-    collection_df = collection,
-    lat_col = "GPSLatitude",
-    lon_col = "GPSLongitude",
-    label_col = "c_label",
-    buffer_distance = 10000  # 10 km buffer
-  )
-
-  expect_true(nrow(result_buffer) > 0)
-  # Should have buffer info if it was applied
-  expect_true("buffer_distance" %in% names(result_buffer) || nrow(result_buffer) > 0)
-
-  unlink(temp_raster)
+  expect_true("lulc_value" %in% names(result))
+  expect_true("lulc_label" %in% names(result))
+  # All pixels are 10 (Tree Cover)
+  expect_true(all(result$lulc_value == 10L, na.rm = TRUE))
+  expect_true(all(result$lulc_label == "Tree Cover", na.rm = TRUE))
 })
 
-test_that("extract_climate_values accepts different buffer functions", {
+test_that("lulc_col renames output columns", {
   skip_if_not_installed("terra")
 
-  r <- terra::rast(
-    matrix(1:100, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
+  tmp_clim <- tempfile(fileext = ".tif"); on.exit(unlink(tmp_clim), add = TRUE)
+  tmp_lulc <- tempfile(fileext = ".tif"); on.exit(unlink(tmp_lulc), add = TRUE)
+  terra::writeRaster(make_raster(),      tmp_clim, overwrite = TRUE)
+  terra::writeRaster(make_lulc_raster(), tmp_lulc, overwrite = TRUE)
+
+  result <- extract_climate(
+    raster_paths  = tmp_clim,
+    collection_df = base_collection()[1, ],
+    lat_col       = "GPSLatitude",
+    lon_col       = "GPSLongitude",
+    label_col     = "c_label",
+    lulc_path     = tmp_lulc,
+    lulc_col      = "land_cover"
   )
 
-  temp_raster <- tempfile(fileext = ".tif")
-  terra::writeRaster(r, temp_raster, overwrite = TRUE)
-
-  collection <- data.frame(
-    c_label = "site1",
-    GPSLatitude = 28.5,
-    GPSLongitude = -79.5
-  )
-
-  # Test with different buffer functions
-  for (fun in c("mean", "median", "min", "max")) {
-    result <- extract_climate_values(
-      raster_paths = temp_raster,
-      collection_df = collection,
-      lat_col = "GPSLatitude",
-      lon_col = "GPSLongitude",
-      label_col = "c_label",
-      buffer_distance = 5000,
-      buffer_fun = fun
-    )
-
-    expect_true(nrow(result) > 0)
-  }
-
-  unlink(temp_raster)
+  expect_true("land_cover_value" %in% names(result))
+  expect_true("land_cover_label" %in% names(result))
+  expect_false("lulc_value" %in% names(result))
 })
 
-test_that("extract_climate_values returns tibble format", {
+test_that("lulc extraction with buffer uses modal class", {
   skip_if_not_installed("terra")
-  skip_if_not_installed("tibble")
 
-  r <- terra::rast(
-    matrix(runif(100), ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
+  tmp_clim <- tempfile(fileext = ".tif"); on.exit(unlink(tmp_clim), add = TRUE)
+  tmp_lulc <- tempfile(fileext = ".tif"); on.exit(unlink(tmp_lulc), add = TRUE)
+  terra::writeRaster(make_raster(),      tmp_clim, overwrite = TRUE)
+  terra::writeRaster(make_lulc_raster(), tmp_lulc, overwrite = TRUE)
+
+  result <- extract_climate(
+    raster_paths    = tmp_clim,
+    collection_df   = base_collection()[1, ],
+    lat_col         = "GPSLatitude",
+    lon_col         = "GPSLongitude",
+    label_col       = "c_label",
+    buffer_distance = 10000,
+    lulc_path       = tmp_lulc
   )
 
-  temp_raster <- tempfile(fileext = ".tif")
-  terra::writeRaster(r, temp_raster, overwrite = TRUE)
-
-  collection <- data.frame(
-    c_label = "site1",
-    GPSLatitude = 28.5,
-    GPSLongitude = -79.5
-  )
-
-  result <- extract_climate_values(
-    raster_paths = temp_raster,
-    collection_df = collection,
-    lat_col = "GPSLatitude",
-    lon_col = "GPSLongitude",
-    label_col = "c_label"
-  )
-
-  expect_true(is.data.frame(result))
-
-  unlink(temp_raster)
+  expect_true("lulc_value" %in% names(result))
+  expect_true("lulc_label" %in% names(result))
+  expect_equal(result$lulc_value, 10L)
+  expect_equal(result$lulc_label, "Tree Cover")
 })
 
-test_that("extract_climate_values includes original collection columns", {
+test_that("missing lulc_path warns and skips rather than erroring", {
   skip_if_not_installed("terra")
 
-  r <- terra::rast(
-    matrix(runif(100), ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
+  tmp_clim <- tempfile(fileext = ".tif"); on.exit(unlink(tmp_clim), add = TRUE)
+  terra::writeRaster(make_raster(), tmp_clim, overwrite = TRUE)
+
+  expect_warning(
+    result <- extract_climate(
+      raster_paths  = tmp_clim,
+      collection_df = base_collection()[1, ],
+      lat_col       = "GPSLatitude",
+      lon_col       = "GPSLongitude",
+      label_col     = "c_label",
+      lulc_path     = "/nonexistent/lulc.tif"
+    ),
+    "land cover extraction skipped"
   )
 
-  temp_raster <- tempfile(fileext = ".tif")
-  terra::writeRaster(r, temp_raster, overwrite = TRUE)
-
-  collection <- data.frame(
-    c_label = c("site1", "site2"),
-    GPSLatitude = c(28.5, 29.5),
-    GPSLongitude = c(-79.5, -78.5),
-    species = c("Ce", "Cb"),
-    habitat = c("forest", "grassland")
-  )
-
-  result <- extract_climate_values(
-    raster_paths = temp_raster,
-    collection_df = collection,
-    lat_col = "GPSLatitude",
-    lon_col = "GPSLongitude",
-    label_col = "c_label"
-  )
-
-  # Should preserve some original columns
-  expect_true("c_label" %in% names(result))
-  # May include other columns depending on function implementation
-
-  unlink(temp_raster)
+  expect_false("lulc_value" %in% names(result))
 })
 
-test_that("extract_climate_values handles custom CRS", {
+# ── CRS reprojection ──────────────────────────────────────────────────────────
+
+test_that("reprojects raster from EPSG:3857 without error", {
   skip_if_not_installed("terra")
 
-  # Create raster in different CRS (Web Mercator)
   r <- terra::rast(
     matrix(runif(100), ncol = 10),
     extent = terra::ext(-8871000, -7791000, 3210000, 4150000),
-    crs = "EPSG:3857"
+    crs    = "EPSG:3857"
   )
+  tmp <- tempfile(fileext = ".tif"); on.exit(unlink(tmp))
+  terra::writeRaster(r, tmp, overwrite = TRUE)
 
-  temp_raster <- tempfile(fileext = ".tif")
-  terra::writeRaster(r, temp_raster, overwrite = TRUE)
-
-  # Collection data in WGS84
-  collection <- data.frame(
-    c_label = "site1",
-    GPSLatitude = 30.0,
-    GPSLongitude = -80.0
+  expect_no_error(
+    extract_climate(
+      raster_paths  = tmp,
+      collection_df = data.frame(c_label = "C1", GPSLatitude = 30.0, GPSLongitude = -80.0),
+      lat_col       = "GPSLatitude",
+      lon_col       = "GPSLongitude",
+      label_col     = "c_label"
+    )
   )
-
-  result <- extract_climate_values(
-    raster_paths = temp_raster,
-    collection_df = collection,
-    lat_col = "GPSLatitude",
-    lon_col = "GPSLongitude",
-    label_col = "c_label",
-    crs = "EPSG:3857"  # Specify raster CRS
-  )
-
-  expect_true(nrow(result) >= 0)  # May be 0 if no overlap, but shouldn't error
-
-  unlink(temp_raster)
 })

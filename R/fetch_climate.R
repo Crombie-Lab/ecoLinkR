@@ -28,6 +28,17 @@
 #' @param overwrite Logical. If `TRUE`, overwrite existing output files. Default: `FALSE`.
 #' @param out_list Logical. If `TRUE` (default), return a named list of output paths.
 #'   If `FALSE`, return a data frame with columns `variable`, `path`, `date_range`.
+#' @param lulc_tiles Character vector of ESA WorldCover tile URLs to download, or `NULL`
+#'   (default) to skip land cover. When provided, tiles are downloaded (or read from
+#'   cache), cropped to the supplied bounding box, mosaicked, and aggregated to
+#'   ~300 m resolution. The processed raster is saved as a GeoTIFF and its path is
+#'   returned as `result$lulc`. Tiles are available from
+#'   `https://esa-worldcover.s3.amazonaws.com/v200/2021/map/`.
+#' @param lulc_cache_dir Character. Directory used to cache raw ESA WorldCover tile
+#'   downloads. Defaults to a `lulc_tiles/` sub-folder inside `out_dir`. Set this to
+#'   a permanent location to avoid re-downloading tiles between R sessions.
+#' @param lulc_agg_factor Integer. Aggregation factor applied to the mosaicked land
+#'   cover raster before saving (default: `30`, ≈ 300 m from 10 m source tiles).
 #'
 #' @return If `out_list = TRUE`: A named list with elements `tmean` and/or `ppt`
 #'   containing paths to the output GeoTIFF files.\cr
@@ -71,7 +82,10 @@ fetch_climate <- function(
     out_dir = NULL,
     resolution = "800m",
     overwrite = FALSE,
-    out_list = TRUE
+    out_list = TRUE,
+    lulc_tiles = NULL,
+    lulc_cache_dir = NULL,
+    lulc_agg_factor = 30L
 ) {
 
   # ---- Validation ----
@@ -336,6 +350,65 @@ fetch_climate <- function(
 
   if (length(results) == 0) {
     stop("No climate data successfully processed")
+  }
+
+  # ---- Optional: download & process ESA WorldCover land cover tiles ----
+  if (!is.null(lulc_tiles) && length(lulc_tiles) > 0) {
+    message("Processing ESA WorldCover land cover tiles...")
+
+    tile_cache <- if (!is.null(lulc_cache_dir)) {
+      lulc_cache_dir
+    } else {
+      file.path(out_dir, "lulc_tiles")
+    }
+    if (!dir.exists(tile_cache)) dir.create(tile_cache, recursive = TRUE)
+
+    tile_files <- character(0)
+    for (i in seq_along(lulc_tiles)) {
+      fname <- file.path(tile_cache, basename(lulc_tiles[i]))
+      if (!file.exists(fname) || isTRUE(overwrite)) {
+        message(sprintf("  LULC tile %d/%d: downloading...", i, length(lulc_tiles)))
+        tryCatch(
+          utils::download.file(lulc_tiles[i], fname, mode = "wb", quiet = TRUE),
+          error = function(e) message("  WARNING - Failed: ", e$message)
+        )
+      } else {
+        message(sprintf("  LULC tile %d/%d: cached", i, length(lulc_tiles)))
+      }
+      if (file.exists(fname)) tile_files <- c(tile_files, fname)
+    }
+
+    if (length(tile_files) == 0) {
+      warning("No LULC tiles available; land cover skipped.")
+    } else {
+      lulc_ext <- terra::ext(lon_min, lon_max, lat_min, lat_max)
+      tile_rasts <- lapply(tile_files, function(f) {
+        r <- terra::rast(f)
+        tryCatch(terra::crop(r, lulc_ext), error = function(e) {
+          warning("Could not crop LULC tile: ", basename(f)); NULL
+        })
+      })
+      tile_rasts <- Filter(Negate(is.null), tile_rasts)
+
+      if (length(tile_rasts) > 0) {
+        lulc_mosaic <- if (length(tile_rasts) == 1) tile_rasts[[1]] else
+          do.call(terra::mosaic, c(tile_rasts, list(fun = "first")))
+        lulc_agg  <- terra::aggregate(lulc_mosaic, fact = lulc_agg_factor, fun = "modal")
+        lulc_agg  <- terra::project(lulc_agg, "EPSG:4326")
+
+        lulc_out <- file.path(
+          out_dir,
+          paste0("lulc_esa_worldcover_",
+                 gsub("[^0-9]", "", lat_min), "N_",
+                 gsub("[^0-9]", "", abs(lon_min)), "W.tif")
+        )
+        terra::writeRaster(lulc_agg, lulc_out, overwrite = TRUE)
+        message("  LULC raster saved: ", lulc_out)
+        results[["lulc"]] <- lulc_out
+      } else {
+        warning("No LULC tiles overlapped the bounding box; land cover skipped.")
+      }
+    }
   }
 
   # ---- Return ----

@@ -133,3 +133,10 @@ join_climate <- function(
 
   dplyr::as_tibble(joined)
 }
+
+#' @rdname join_climate
+#' @export
+join_climate_to_collection <- function(...) {
+  .Deprecated("join_climate")
+  join_climate(...)
+}

@@ -14,9 +14,14 @@ plot_collections_raster(
   opacity = 0.6,
   species_col = NULL,
   species_colors = NULL,
+  proliferating_col = NULL,
+  lulc = NULL,
+  lulc_opacity = 0.65,
+  show_lulc = TRUE,
   show_rasters = NULL,
   out_html = NULL,
-  title = "Climate & Collection Sites"
+  title = "Climate & Collection Sites",
+  max_bytes = 16 * 1024^2
 )
 }
 \arguments{
@@ -46,6 +51,27 @@ marker coloring. If NULL, all markers are the same color.}
 Example: `c(Ce = "blue", Cb = "orange", Om = "red")`.
 If species_col is used but colors not provided, default palette is used.}
 
+\item{proliferating_col}{Character. Optional column name indicating whether
+worms were proliferating (1 = yes, 0/NA = no). When supplied, marker colour
+is determined automatically per collection label:
+- `"red"` — proliferating AND species ID confirmed
+- `"lightgray"` — proliferating but species unknown
+- `"black"` — no organism detected
+Overrides `species_col`/`species_colors` colouring.}
+
+\item{lulc}{Optional land cover layer. Can be:
+- `NULL` (default) - no land cover layer added.
+- A `SpatRaster` of land cover values (pre-processed, e.g. ESA WorldCover).
+- A single file path (character scalar) to a GeoTIFF produced by
+  [fetch_climate()] with `lulc_tiles` specified.
+- A character vector of ESA WorldCover tile URLs to download on the fly.
+  Tiles are cached in `tempdir()` and cropped to the sites bounding box.}
+
+\item{lulc_opacity}{Numeric. Opacity for the land cover layer (default: `0.65`).}
+
+\item{show_lulc}{Logical. Whether the land cover layer is visible by default
+in the layer control (default: `TRUE`).}
+
 \item{show_rasters}{Character vector. Which rasters to show by default
 (others hidden). Default: first raster only. Set to `NULL` to show all.}
 
@@ -54,6 +80,10 @@ If `NULL`, map is displayed but not saved.}
 
 \item{title}{Character. Map title displayed in the upper left.
 Default: `"Climate & Collection Sites"`.}
+
+\item{max_bytes}{Numeric. Maximum bytes allowed for raster image rendering in
+leaflet. Higher values produce sharper maps at the cost of file size.
+Default: `16 * 1024^2` (16 MB). The leaflet package default is 4 MB.}
 }
 \value{
 A leaflet map object (invisibly). If `out_html` is provided,

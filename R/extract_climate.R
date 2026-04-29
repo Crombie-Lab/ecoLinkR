@@ -26,6 +26,13 @@
 #'   If `NULL`, uses basenames of raster files.
 #' @param crs Character. Coordinate reference system as EPSG code or proj string.
 #'   Default: `"EPSG:4326"` (WGS84). Must match the CRS of input rasters.
+#' @param lulc_path Character. Optional path to an ESA WorldCover GeoTIFF (e.g.
+#'   as returned by [fetch_climate()] via `result$lulc`). When supplied, the
+#'   dominant land cover class within each collection point (or buffer, when
+#'   `buffer_distance` is set) is extracted and appended as two columns:
+#'   the raw integer value and a human-readable label.
+#' @param lulc_col Character. Base name for the land cover output columns.
+#'   Default: `"lulc"`. Produces `<lulc_col>_value` and `<lulc_col>_label`.
 #' @param out_csv Character. Optional path to write extracted values to CSV.
 #'   If `NULL`, results are not written to disk.
 #'
@@ -72,6 +79,8 @@ extract_climate <- function(
     buffer_fun = "mean",
     var_names = NULL,
     crs = "EPSG:4326",
+    lulc_path = NULL,
+    lulc_col = "lulc",
     out_csv = NULL
 ) {
 
@@ -209,6 +218,48 @@ extract_climate <- function(
   if (!is.null(buffer_distance)) {
     result$buffer_distance <- buffer_distance
     result$buffer_fun <- buffer_fun
+  }
+
+  # ---- extract land cover if requested ----
+  if (!is.null(lulc_path)) {
+    if (!file.exists(lulc_path)) {
+      warning("lulc_path not found: ", lulc_path, " — land cover extraction skipped.")
+    } else {
+      esa_classes <- data.frame(
+        value = c(10L, 20L, 30L, 40L, 50L, 60L, 70L, 80L, 90L, 95L, 100L),
+        label = c("Tree Cover", "Shrubland", "Grassland", "Cropland",
+                  "Built-up", "Bare / Sparse Veg", "Snow and Ice",
+                  "Permanent Water", "Herbaceous Wetland", "Mangroves",
+                  "Moss and Lichen"),
+        stringsAsFactors = FALSE
+      )
+
+      r_lulc <- terra::rast(lulc_path)
+      if (!grepl("4326", terra::crs(r_lulc), ignore.case = TRUE)) {
+        r_lulc <- terra::project(r_lulc, crs)
+      }
+
+      if (is.null(buffer_distance)) {
+        lulc_vals <- terra::extract(r_lulc, pts)[[2]]
+      } else {
+        buf_pts   <- terra::buffer(pts, buffer_distance)
+        lulc_raw  <- terra::extract(r_lulc, buf_pts)
+        # modal (most common) class within each buffer
+        lulc_vals <- as.integer(sapply(
+          split(lulc_raw[[2]], lulc_raw[[1]]),
+          function(x) {
+            x <- x[!is.na(x)]
+            if (length(x) == 0) return(NA_integer_)
+            as.integer(names(sort(table(x), decreasing = TRUE))[1])
+          }
+        ))
+      }
+
+      result[[paste0(lulc_col, "_value")]] <- as.integer(lulc_vals)
+      result[[paste0(lulc_col, "_label")]] <- esa_classes$label[
+        match(as.integer(lulc_vals), esa_classes$value)
+      ]
+    }
   }
 
   result <- tibble::as_tibble(result)

@@ -16,7 +16,10 @@ fetch_climate(
   out_dir = NULL,
   resolution = "800m",
   overwrite = FALSE,
-  out_list = TRUE
+  out_list = TRUE,
+  lulc_tiles = NULL,
+  lulc_cache_dir = NULL,
+  lulc_agg_factor = 30L
 )
 
 download_climate_data(
@@ -30,64 +33,82 @@ download_climate_data(
   out_dir = NULL,
   resolution = "800m",
   overwrite = FALSE,
-  out_list = TRUE
+  out_list = TRUE,
+  lulc_tiles = NULL,
+  lulc_cache_dir = NULL,
+  lulc_agg_factor = 30L
 )
 }
 \arguments{
 \item{variable}{Character. Climate variable(s): `"tmean"` (mean daily temperature),
 `"ppt"` (precipitation), or `c("tmean", "ppt")` for both.}
 
-\item{start_date}{Character in format `"YYYY-MM-DD"`. Start date for climate period (required).}
+\item{start_date}{Character in format `"YYYY-MM-DD"`. Start date for climate period.}
 
-\item{end_date}{Character in format `"YYYY-MM-DD"`. End date for climate period (required).}
+\item{end_date}{Character in format `"YYYY-MM-DD"`. End date for climate period.}
 
-\item{lat_min}{Numeric. Minimum latitude for cropping region (required).}
+\item{lat_min}{Numeric. Minimum latitude for cropping (required).}
 
-\item{lat_max}{Numeric. Maximum latitude for cropping region (required).}
+\item{lat_max}{Numeric. Maximum latitude for cropping (required).}
 
-\item{lon_min}{Numeric. Minimum longitude for cropping region (required).}
+\item{lon_min}{Numeric. Minimum longitude for cropping (required).}
 
-\item{lon_max}{Numeric. Maximum longitude for cropping region (required).}
+\item{lon_max}{Numeric. Maximum longitude for cropping (required).}
 
 \item{out_dir}{Character. Directory where processed GeoTIFF tiles will be saved.
-If `NULL`, uses `tempdir()`.}
+If `NULL`, uses `tempdir()`. Default: `NULL`.}
 
-\item{resolution}{Character. PRISM resolution: `"800m"` (daily 800m, default) or 
-`"4km"` (coarser, more complete historical data).}
+\item{resolution}{Character. PRISM resolution: `"800m"` (daily 800m) or `"4km"` 
+(coarser, more complete). Default: `"800m"`.}
 
-\item{overwrite}{Logical. If `TRUE`, overwrite existing output files (default: `FALSE`).}
+\item{overwrite}{Logical. If `TRUE`, overwrite existing output files. Default: `FALSE`.}
 
-\item{out_list}{Logical. If `TRUE` (default), return a named list of output raster paths.
+\item{out_list}{Logical. If `TRUE` (default), return a named list of output paths.
 If `FALSE`, return a data frame with columns `variable`, `path`, `date_range`.}
+
+\item{lulc_tiles}{Character vector of ESA WorldCover tile URLs to download, or `NULL`
+(default) to skip land cover. When provided, tiles are downloaded (or read from
+cache), cropped to the supplied bounding box, mosaicked, and aggregated to
+~300 m resolution. The processed raster is saved as a GeoTIFF and its path is
+returned as `result$lulc`. Tiles are available from
+`https://esa-worldcover.s3.amazonaws.com/v200/2021/map/`.}
+
+\item{lulc_cache_dir}{Character. Directory used to cache raw ESA WorldCover tile
+downloads. Defaults to a `lulc_tiles/` sub-folder inside `out_dir`. Set this to
+a permanent location to avoid re-downloading tiles between R sessions.}
+
+\item{lulc_agg_factor}{Integer. Aggregation factor applied to the mosaicked land
+cover raster before saving (default: `30`, ≈ 300 m from 10 m source tiles).}
 }
 \value{
-If `out_list = TRUE`: A named list with elements `tmean` and/or `ppt` 
-  containing paths to the output GeoTIFF files ready for use with mapping functions.\cr
+If `out_list = TRUE`: A named list with elements `tmean` and/or `ppt`
+  containing paths to the output GeoTIFF files.\cr
   If `out_list = FALSE`: A data frame with columns `variable`, `path`, `date_range`.
 }
 \description{
 Downloads daily climate data from PRISM, stacks across a date range, crops to a
-region of interest, calculates temporal mean, and writes processed GeoTIFF tiles
-ready for mapping and analysis.
+region of interest, calculates temporal summaries (mean for temperature, mean
+for precipitation), and writes processed GeoTIF tiles ready for mapping and analysis.
 }
 \details{
 The function:
-\enumerate{
-  \item Downloads daily PRISM raster data for specified dates
-  \item Stacks all daily rasters for the period
-  \item Crops to user-specified latitude/longitude bounds
-  \item Calculates temporal mean (across all dates) for each variable
-  \item Writes high-quality GeoTIFF output files suitable for mapping
-}
-
-Output files are named: `prism_mean_{variable}_{start_date}_{end_date}.tif` and contain
-raster values representing the mean across all days in the date range.
+1. Downloads daily PRISM raster data for specified dates
+2. Stacks all daily rasters for the period
+3. Crops to user-specified latitude/longitude bounds
+4. Calculates temporal mean (across dates) for each variable
+5. Writes high-quality GeoTIFF output files
 
 Requires the \pkg{prism} and \pkg{terra} packages.
+
+
+Output GeoTIFF files are named with the pattern:
+`prism_mean_{variable}_{start_date}_{end_date}.tif`
+and contain raster data cropped to your specified region with values representing
+the mean across all days in the date range.
 }
 \examples{
 \dontrun{
-# Download PRISM data for Miami region, average over 3 months
+# Download PRISM data, crop to Miami region, average over 3 months
 clim_tiles <- fetch_climate(
   variable = c("tmean", "ppt"),
   start_date = "2024-11-01",
@@ -97,11 +118,10 @@ clim_tiles <- fetch_climate(
   lon_min = -80.63,
   lon_max = -80.60,
   out_dir = "data/climate/processed",
-  resolution = "800m",
-  overwrite = TRUE
+  resolution = "800m"
 )
 
-# Use the output rasters in mapping
+# Use the output in mapping
 r_temp <- terra::rast(clim_tiles$tmean)
 r_precip <- terra::rast(clim_tiles$ppt)
 }

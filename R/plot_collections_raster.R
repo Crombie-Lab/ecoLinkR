@@ -24,6 +24,23 @@
 #' @param species_colors Named character vector. Colors for each species.
 #'   Example: `c(Ce = "blue", Cb = "orange", Om = "red")`.
 #'   If species_col is used but colors not provided, default palette is used.
+#' @param proliferating_col Character. Optional column name indicating whether
+#'   worms were proliferating (1 = yes, 0/NA = no). When supplied, marker colour
+#'   is determined automatically per collection label:
+#'   - `"red"` — proliferating AND species ID confirmed
+#'   - `"lightgray"` — proliferating but species unknown
+#'   - `"black"` — no organism detected
+#'   Overrides `species_col`/`species_colors` colouring.
+#' @param lulc Optional land cover layer. Can be:
+#'   - `NULL` (default) - no land cover layer added.
+#'   - A `SpatRaster` of land cover values (pre-processed, e.g. ESA WorldCover).
+#'   - A single file path (character scalar) to a GeoTIFF produced by
+#'     [fetch_climate()] with `lulc_tiles` specified.
+#'   - A character vector of ESA WorldCover tile URLs to download on the fly.
+#'     Tiles are cached in `tempdir()` and cropped to the sites bounding box.
+#' @param lulc_opacity Numeric. Opacity for the land cover layer (default: `0.65`).
+#' @param show_lulc Logical. Whether the land cover layer is visible by default
+#'   in the layer control (default: `TRUE`).
 #' @param show_rasters Character vector. Which rasters to show by default
 #'   (others hidden). Default: first raster only. Set to `NULL` to show all.
 #' @param out_html Character. Optional path to save the map as an HTML file.
@@ -82,6 +99,10 @@ plot_collections_raster <- function(
     opacity = 0.6,
     species_col = NULL,
     species_colors = NULL,
+    proliferating_col = NULL,
+    lulc = NULL,
+    lulc_opacity = 0.65,
+    show_lulc = TRUE,
     show_rasters = NULL,
     out_html = NULL,
     title = "Climate & Collection Sites",
@@ -180,30 +201,147 @@ plot_collections_raster <- function(
   }
   names(palettes) <- names(raster_list)
 
-  # ---- prepare site markers ----
-  # Color by species if specified
-  if (!is.null(species_col) && species_col %in% names(sites)) {
-    species <- sites[[species_col]]
+  # ---- prepare land cover raster ----
+  esa_classes <- data.frame(
+    value = c(10,   20,          30,           40,        50,
+              60,               70,            80,
+              90,               95,            100),
+    label = c("Tree Cover", "Shrubland", "Grassland", "Cropland", "Built-up",
+              "Bare / Sparse Veg", "Snow and Ice", "Permanent Water",
+              "Herbaceous Wetland", "Mangroves", "Moss and Lichen"),
+    color = c("#006400", "#FFBB22", "#FFFF4C", "#F096FF", "#FA0000",
+              "#B4B4B4", "#F0F0F0", "#0064C8",
+              "#0096A0", "#00CF75", "#FAE6A0"),
+    stringsAsFactors = FALSE
+  )
+  lulc_raster <- NULL
+  lulc_pal_df <- NULL
+  pal_lulc    <- NULL
 
+  if (!is.null(lulc)) {
+    if (inherits(lulc, "SpatRaster")) {
+      lulc_raster <- lulc
+      if (!grepl("4326", terra::crs(lulc_raster), ignore.case = TRUE)) {
+        lulc_raster <- terra::project(lulc_raster, "EPSG:4326")
+      }
+    } else if (is.character(lulc) && length(lulc) == 1 && file.exists(lulc)) {
+      # Pre-processed GeoTIFF (e.g. from fetch_climate with lulc_tiles)
+      lulc_raster <- terra::rast(lulc)
+      if (!grepl("4326", terra::crs(lulc_raster), ignore.case = TRUE)) {
+        lulc_raster <- terra::project(lulc_raster, "EPSG:4326")
+      }
+    } else if (is.character(lulc)) {
+      tmp_dir    <- tempdir()
+      tile_files <- character(0)
+      for (i in seq_along(lulc)) {
+        fname <- file.path(tmp_dir, basename(lulc[i]))
+        if (!file.exists(fname)) {
+          message(sprintf("LULC tile %d/%d: downloading...", i, length(lulc)))
+          tryCatch(
+            utils::download.file(lulc[i], fname, mode = "wb", quiet = TRUE),
+            error = function(e) message("  WARNING - Failed: ", e$message)
+          )
+        } else {
+          message(sprintf("LULC tile %d/%d: cached", i, length(lulc)))
+        }
+        if (file.exists(fname)) tile_files <- c(tile_files, fname)
+      }
+      if (length(tile_files) == 0) {
+        warning("No LULC tiles could be downloaded; land cover layer skipped.")
+      } else {
+        lng_range <- range(sites[[lon_col]], na.rm = TRUE)
+        lat_range <- range(sites[[lat_col]], na.rm = TRUE)
+        pad       <- 0.5
+        sites_ext <- terra::ext(
+          lng_range[1] - pad, lng_range[2] + pad,
+          lat_range[1] - pad, lat_range[2] + pad
+        )
+        tile_rasts <- lapply(tile_files, function(f) {
+          r <- terra::rast(f)
+          tryCatch(terra::crop(r, sites_ext), error = function(e) {
+            warning("Could not crop LULC tile: ", basename(f)); NULL
+          })
+        })
+        tile_rasts <- Filter(Negate(is.null), tile_rasts)
+        if (length(tile_rasts) > 0) {
+          lulc_raster <- if (length(tile_rasts) == 1) tile_rasts[[1]] else
+            do.call(terra::mosaic, c(tile_rasts, list(fun = "first")))
+          lulc_raster <- terra::aggregate(lulc_raster, fact = 30, fun = "modal")
+          lulc_raster <- terra::project(lulc_raster, "EPSG:4326")
+        } else {
+          warning("No LULC tiles overlapped the sites extent; land cover layer skipped.")
+        }
+      }
+    } else {
+      stop("'lulc' must be a SpatRaster or a character vector of tile URLs.")
+    }
+
+    if (!is.null(lulc_raster)) {
+      present_vals <- sort(unique(terra::values(lulc_raster, na.rm = TRUE)))
+      lulc_pal_df  <- esa_classes[esa_classes$value %in% present_vals, ]
+      pal_lulc     <- leaflet::colorFactor(
+        palette  = lulc_pal_df$color,
+        levels   = lulc_pal_df$value,
+        na.color = "transparent"
+      )
+    }
+  }
+
+  # ---- prepare site markers ----
+  if (!is.null(proliferating_col) && proliferating_col %in% names(sites)) {
+    # Color per c_label: red = species confirmed + proliferating,
+    # lightgray = proliferating but unknown species, black = no organism
+    has_species_col <- !is.null(species_col) && species_col %in% names(sites)
+    if (has_species_col) {
+      sites <- sites %>%
+        dplyr::group_by(.data[[label_col]]) %>%
+        dplyr::mutate(
+          marker_color = dplyr::case_when(
+            any(
+              .data[[proliferating_col]] == 1 &
+                !is.na(.data[[species_col]]) &
+                .data[[species_col]] != "" &
+                stringr::str_to_lower(.data[[species_col]]) != "n/a",
+              na.rm = TRUE
+            ) ~ "red",
+            any(.data[[proliferating_col]] == 1, na.rm = TRUE) ~ "lightgray",
+            TRUE ~ "black"
+          )
+        ) %>%
+        dplyr::ungroup()
+    } else {
+      sites <- sites %>%
+        dplyr::group_by(.data[[label_col]]) %>%
+        dplyr::mutate(
+          marker_color = dplyr::case_when(
+            any(.data[[proliferating_col]] == 1, na.rm = TRUE) ~ "lightgray",
+            TRUE ~ "black"
+          )
+        ) %>%
+        dplyr::ungroup()
+    }
+    use_awesome <- TRUE
+  } else if (!is.null(species_col) && species_col %in% names(sites)) {
+    # Color by species
+    species <- sites[[species_col]]
     if (is.null(species_colors)) {
-      # Default colors
       unique_species <- unique(species[!is.na(species)])
       species_colors <- c(
         Ce = "blue", Cb = "orange", Om = "red", N2 = "purple",
         C = "green"
       )[unique_species]
       if (any(is.na(species_colors))) {
-        # Generate more colors if needed
         missing <- unique_species[is.na(species_colors[unique_species])]
         extra_colors <- grDevices::rainbow(length(missing))
         species_colors <- c(species_colors, stats::setNames(extra_colors, missing))
       }
     }
-
     sites$marker_color <- species_colors[as.character(species)]
     sites$marker_color[is.na(sites$marker_color)] <- "gray"
+    use_awesome <- FALSE
   } else {
     sites$marker_color <- "blue"
+    use_awesome <- FALSE
   }
 
   # Build popups
@@ -239,11 +377,23 @@ plot_collections_raster <- function(
   m <- leaflet::leaflet(
     options = leaflet::leafletOptions(zoomControl = TRUE)
   ) %>%
-    leaflet::addProviderTiles("OpenStreetMap.Mapnik", group = "OSM (Base)") %>%
+    leaflet::addTiles(group = "OSM (Base)") %>%
     leaflet::addControl(
       html = paste0("<h4>", title, "</h4>"),
       position = "topleft"
     )
+
+  # ---- add land cover layer (below climate rasters) ----
+  if (!is.null(lulc_raster) && !is.null(pal_lulc)) {
+    m <- m %>%
+      leaflet::addRasterImage(
+        lulc_raster,
+        colors   = pal_lulc,
+        opacity  = lulc_opacity,
+        group    = "Land Cover (ESA)",
+        maxBytes = max_bytes
+      )
+  }
 
   # ---- add raster layers ----
   for (i in seq_along(raster_list)) {
@@ -262,20 +412,64 @@ plot_collections_raster <- function(
   }
 
   # ---- add collection site markers ----
-  m <- m %>%
-    leaflet::addCircleMarkers(
-      data = sites,
-      lng = sites[[lon_col]],
-      lat = sites[[lat_col]],
-      radius = 5,
-      stroke = TRUE,
-      weight = 2,
-      color = "black",
-      fillColor = ~marker_color,
-      fillOpacity = 0.8,
-      popup = site_popups,
-      group = "Collection Sites"
+  if (isTRUE(use_awesome)) {
+    site_icons <- leaflet::awesomeIcons(
+      icon        = "circle",
+      library     = "fa",
+      markerColor = sites$marker_color,
+      iconColor   = "white"
     )
+    m <- m %>%
+      leaflet::addAwesomeMarkers(
+        data         = sites,
+        lng          = sites[[lon_col]],
+        lat          = sites[[lat_col]],
+        icon         = site_icons,
+        popup        = site_popups,
+        popupOptions = leaflet::popupOptions(maxWidth = 500),
+        group        = "Collection Sites"
+      )
+  } else {
+    m <- m %>%
+      leaflet::addCircleMarkers(
+        data        = sites,
+        lng         = sites[[lon_col]],
+        lat         = sites[[lat_col]],
+        radius      = 5,
+        stroke      = TRUE,
+        weight      = 2,
+        color       = "black",
+        fillColor   = ~marker_color,
+        fillOpacity = 0.8,
+        popup       = site_popups,
+        group       = "Collection Sites"
+      )
+  }
+
+  # ---- add land cover legend ----
+  if (!is.null(lulc_raster) && !is.null(lulc_pal_df)) {
+    m <- m %>%
+      leaflet::addLegend(
+        position = "bottomleft",
+        colors   = lulc_pal_df$color,
+        labels   = lulc_pal_df$label,
+        title    = "Land Cover (ESA 2021)",
+        opacity  = 0.9,
+        layerId  = "legend_lulc"
+      )
+  }
+
+  # ---- add site colour legend ----
+  if (isTRUE(use_awesome)) {
+    m <- m %>%
+      leaflet::addLegend(
+        position = "bottomleft",
+        colors   = c("red", "lightgray", "black"),
+        labels   = c("Species ID confirmed", "Proliferating (unknown species)", "No organism"),
+        title    = "Collection Sites",
+        opacity  = 0.9
+      )
+  }
 
   # ---- add legends ----
   # Add legend for each raster
@@ -299,7 +493,11 @@ plot_collections_raster <- function(
   }
 
   # ---- add layer controls ----
-  overlay_groups <- c(names(raster_list), "Collection Sites")
+  overlay_groups <- c(
+    if (!is.null(lulc_raster)) "Land Cover (ESA)" else NULL,
+    names(raster_list),
+    "Collection Sites"
+  )
 
   m <- m %>%
     leaflet::addLayersControl(
@@ -313,6 +511,10 @@ plot_collections_raster <- function(
   for (hidden in hidden_rasters) {
     m <- m %>%
       leaflet::hideGroup(hidden)
+  }
+
+  if (!is.null(lulc_raster) && !isTRUE(show_lulc)) {
+    m <- m %>% leaflet::hideGroup("Land Cover (ESA)")
   }
 
   # ---- fit bounds to data ----

@@ -15,6 +15,8 @@ extract_climate(
   buffer_fun = "mean",
   var_names = NULL,
   crs = "EPSG:4326",
+  lulc_path = NULL,
+  lulc_col = "lulc",
   out_csv = NULL
 )
 
@@ -28,6 +30,8 @@ extract_climate_values(
   buffer_fun = "mean",
   var_names = NULL,
   crs = "EPSG:4326",
+  lulc_path = NULL,
+  lulc_col = "lulc",
   out_csv = NULL
 )
 }
@@ -57,6 +61,15 @@ If `NULL`, uses basenames of raster files.}
 
 \item{crs}{Character. Coordinate reference system as EPSG code or proj string.
 Default: `"EPSG:4326"` (WGS84). Must match the CRS of input rasters.}
+
+\item{lulc_path}{Character. Optional path to an ESA WorldCover GeoTIFF (e.g.
+as returned by [fetch_climate()] via `result$lulc`). When supplied, the
+dominant land cover class within each collection point (or buffer, when
+`buffer_distance` is set) is extracted and appended as two columns:
+the raw integer value and a human-readable label.}
+
+\item{lulc_col}{Character. Base name for the land cover output columns.
+Default: `"lulc"`. Produces `<lulc_col>_value` and `<lulc_col>_label`.}
 
 \item{out_csv}{Character. Optional path to write extracted values to CSV.
 If `NULL`, results are not written to disk.}

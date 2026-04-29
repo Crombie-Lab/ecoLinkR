@@ -6,7 +6,7 @@
 # 3. Joining climate data to collection data
 # 4. Visualizing climate and collection data on an interactive map
 #
-# Last updated: 2026-04-15 (fixed for correct value extraction)
+# Last updated: 2026-04-27
 library(devtools)
 load_all()
 
@@ -24,6 +24,17 @@ message("Starting climate data fetch...")
 message("Date range: 2024-11-01 to 2025-02-01")
 message("Region: lat [27.95, 28.10], lon [-80.67, -80.55]")
 
+# ESA WorldCover tile URLs covering Florida (tiles are cached in lulc_cache_dir after first run)
+fl_lulc_tiles <- c(
+  "https://esa-worldcover.s3.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N27W084_Map.tif",
+  "https://esa-worldcover.s3.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N27W081_Map.tif",
+  "https://esa-worldcover.s3.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N24W081_Map.tif",
+  "https://esa-worldcover.s3.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N24W084_Map.tif",
+  "https://esa-worldcover.s3.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N30W087_Map.tif",
+  "https://esa-worldcover.s3.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N30W084_Map.tif",
+  "https://esa-worldcover.s3.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N30W081_Map.tif"
+)
+
 # Start with just tmean to test
 clim_data <- fetch_climate(
   variable = c("tmean", "ppt"),
@@ -36,7 +47,9 @@ clim_data <- fetch_climate(
   out_dir = "/Users/lainieboldus/Desktop/Crombie Lab/climate_test/data/processed",
   resolution = "800m",
   overwrite = TRUE,
-  out_list = TRUE
+  out_list = TRUE,
+  lulc_tiles = fl_lulc_tiles,
+  lulc_cache_dir = "/Users/lainieboldus/Desktop/Crombie Lab/climate_test/data/raw/lulc_tiles"
 )
 
 # Check that rasters were created
@@ -87,6 +100,7 @@ climate_extracted <- ecoLinkR::extract_climate(
   label_col = "c_label",
   var_names = c("mean_temp_celsius", "mean_precip_mm"),
   buffer_distance = NULL,  # Set to e.g. 10000 for 10km buffer
+  lulc_path = clim_data$lulc,  # adds lulc_value + lulc_label columns
   out_csv = "/Users/lainieboldus/Desktop/Crombie Lab/climate_test/data/processed/extracted_climate_values.csv"
 )
 
@@ -120,8 +134,11 @@ ecoLinkR::plot_collections_raster(
   palette = "viridis",
   opacity = 0.6,
   species_col = "species_id",
-  species_colors = c(Ce = "blue", Cb = "orange", Om = "red", N2 = "purple"),
-  show_rasters = "Temperature_C",  # Show temperature by default
+  proliferating_col = "proliferating",  # red = ID confirmed, lightgray = proliferating/unknown, black = none
+  lulc = clim_data$lulc,                # path to processed LULC GeoTIFF from fetch_climate()
+  lulc_opacity = 0.65,
+  show_lulc = TRUE,
+  show_rasters = "Temperature_C",       # Show temperature by default
   out_html = "/Users/lainieboldus/Desktop/Crombie Lab/climate_test/plots/climate_collection_map.html",
   title = "Collection Sites & Climate Data"
 )
@@ -133,31 +150,31 @@ message("Map saved to: /Users/lainieboldus/Desktop/Crombie Lab/climate_test/plot
 # ============================================================
 
 # Summary statistics by species
-summary_by_species <- collection_with_climate %>%
-  group_by(species_id) %>%
-  summarise(
-    n_collections = n(),
-    mean_temp = mean(mean_temp_celsius, na.rm = TRUE),
-    sd_temp = sd(mean_temp_celsius, na.rm = TRUE),
-    mean_precip = mean(mean_precip_mm, na.rm = TRUE),
-    sd_precip = sd(mean_precip_mm, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-print(summary_by_species)
-
+# summary_by_species <- collection_with_climate %>%
+#   group_by(species_id) %>%
+#   summarise(
+#     n_collections = n(),
+#     mean_temp = mean(mean_temp_celsius, na.rm = TRUE),
+#     sd_temp = sd(mean_temp_celsius, na.rm = TRUE),
+#     mean_precip = mean(mean_precip_mm, na.rm = TRUE),
+#     sd_precip = sd(mean_precip_mm, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+#
+# print(summary_by_species)
+#
 # Create visualizations
-library(ggplot2)
+# library(ggplot2)
 
 # Temperature vs Precipitation
-ggplot(collection_with_climate, aes(x = mean_temp_celsius, y = mean_precip_mm, color = species_id)) +
-  geom_point(size = 3, alpha = 0.7) +
-  theme_minimal() +
-  labs(
-    title = "Collection Sites: Temperature vs Precipitation",
-    x = "Mean Temperature (°C)",
-    y = "Mean Precipitation (mm/day)",
-    color = "Species"
-  )
-
-ggsave("/Users/lainieboldus/Desktop/Crombie Lab/climate_test/plots/temp_vs_precip.pdf", width = 8, height = 6)
+# ggplot(collection_with_climate, aes(x = mean_temp_celsius, y = mean_precip_mm, color = species_id)) +
+#   geom_point(size = 3, alpha = 0.7) +
+#   theme_minimal() +
+#   labs(
+#     title = "Collection Sites: Temperature vs Precipitation",
+#     x = "Mean Temperature (°C)",
+#     y = "Mean Precipitation (mm/day)",
+#     color = "Species"
+#   )
+#
+# ggsave("/Users/lainieboldus/Desktop/Crombie Lab/climate_test/plots/temp_vs_precip.pdf", width = 8, height = 6)

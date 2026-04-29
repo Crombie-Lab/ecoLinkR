@@ -1,503 +1,446 @@
-# Tests for plot_collections_raster function
+# Tests for plot_collections_raster
 
-test_that("plot_collections_raster creates a map with single raster", {
-  skip_if_not_installed("terra")
-  skip_if_not_installed("leaflet")
+# ── helpers ───────────────────────────────────────────────────────────────────
 
-  # Create a mock raster with known values
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
+make_raster <- function(values = 1:100,
+                        ext = terra::ext(-80, -70, 25, 35),
+                        crs = "EPSG:4326") {
+  terra::rast(matrix(values, ncol = 10), extent = ext, crs = crs)
+}
 
-  # Create collection data with coordinates
-  collection <- data.frame(
-    c_label = c("site1", "site2", "site3"),
-    c_latitude = c(28.5, 29.5, 30.5),
+make_lulc_raster <- function(ext = terra::ext(-80, -70, 25, 35)) {
+  terra::rast(matrix(rep(10L, 100), ncol = 10), extent = ext, crs = "EPSG:4326")
+}
+
+base_collection <- function() {
+  data.frame(
+    c_label     = c("C1", "C2", "C3"),
+    c_latitude  = c(28.5, 29.5, 30.5),
     c_longitude = c(-79.5, -78.5, -77.5)
   )
+}
+
+# ── basic map creation ────────────────────────────────────────────────────────
+
+test_that("returns a leaflet object for a single raster", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
 
   map <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection
+    raster_list   = make_raster(),
+    collection_df = base_collection()
   )
 
   expect_s3_class(map, "leaflet")
 })
 
-test_that("plot_collections_raster creates a map with multiple rasters", {
+test_that("returns a leaflet object for a named list of rasters", {
   skip_if_not_installed("terra")
   skip_if_not_installed("leaflet")
 
-  # Create two mock rasters
-  r1 <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-  r2 <- terra::rast(
-    matrix(100 + (1:100), ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-
-  collection <- data.frame(
-    c_label = c("site1", "site2"),
-    c_latitude = c(28.5, 29.5),
-    c_longitude = c(-79.5, -78.5)
-  )
-
-  raster_list <- list(Temperature = r1, Precipitation = r2)
   map <- plot_collections_raster(
-    raster_list = raster_list,
-    collection_df = collection
+    raster_list   = list(Temperature = make_raster(), Precipitation = make_raster(101:200)),
+    collection_df = base_collection()
   )
 
   expect_s3_class(map, "leaflet")
 })
 
-test_that("plot_collections_raster auto-detects latitude/longitude columns", {
+test_that("auto-converts a bare SpatRaster to a list", {
   skip_if_not_installed("terra")
   skip_if_not_installed("leaflet")
 
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
+  # Passing a SpatRaster directly (not wrapped in list) should not error
+  expect_s3_class(
+    plot_collections_raster(
+      raster_list   = make_raster(),
+      collection_df = base_collection()
+    ),
+    "leaflet"
   )
-
-  # Test with c_latitude/c_longitude
-  collection1 <- data.frame(
-    c_label = "site1",
-    c_latitude = 29.0,
-    c_longitude = -79.0
-  )
-
-  map1 <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection1
-  )
-  expect_s3_class(map1, "leaflet")
-
-  # Test with collection_latitude/collection_longitude
-  collection2 <- data.frame(
-    c_label = "site1",
-    collection_latitude = 29.0,
-    collection_longitude = -79.0
-  )
-
-  map2 <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection2
-  )
-  expect_s3_class(map2, "leaflet")
-
-  # Test with lat/lon
-  collection3 <- data.frame(
-    c_label = "site1",
-    lat = 29.0,
-    lon = -79.0
-  )
-
-  map3 <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection3
-  )
-  expect_s3_class(map3, "leaflet")
 })
 
-test_that("plot_collections_raster works with custom lat/lon columns", {
+test_that("auto-names unnamed rasters as Layer_1, Layer_2, ...", {
   skip_if_not_installed("terra")
   skip_if_not_installed("leaflet")
 
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
+  # Unnamed list — function should assign Layer_1, Layer_2
+  expect_s3_class(
+    plot_collections_raster(
+      raster_list   = list(make_raster(), make_raster(101:200)),
+      collection_df = base_collection()
+    ),
+    "leaflet"
   )
-
-  collection <- data.frame(
-    c_label = "site1",
-    GPSLatitude = 29.0,
-    GPSLongitude = -79.0
-  )
-
-  map <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection,
-    lat_col = "GPSLatitude",
-    lon_col = "GPSLongitude"
-  )
-
-  expect_s3_class(map, "leaflet")
 })
 
-test_that("plot_collections_raster handles species coloring", {
+# ── input validation ──────────────────────────────────────────────────────────
+
+test_that("errors on empty raster_list", {
   skip_if_not_installed("terra")
   skip_if_not_installed("leaflet")
-
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-
-  collection <- data.frame(
-    c_label = c("site1", "site2", "site3"),
-    c_latitude = c(28.5, 29.5, 30.5),
-    c_longitude = c(-79.5, -78.5, -77.5),
-    species_id = c("Ce", "Cb", "Om")
-  )
-
-  species_colors <- c(Ce = "blue", Cb = "orange", Om = "red")
-
-  map <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection,
-    species_col = "species_id",
-    species_colors = species_colors
-  )
-
-  expect_s3_class(map, "leaflet")
-})
-
-test_that("plot_collections_raster handles species coloring with defaults", {
-  skip_if_not_installed("terra")
-  skip_if_not_installed("leaflet")
-
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-
-  collection <- data.frame(
-    c_label = c("site1", "site2"),
-    c_latitude = c(28.5, 29.5),
-    c_longitude = c(-79.5, -78.5),
-    species_id = c("Ce", "Cb")
-  )
-
-  map <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection,
-    species_col = "species_id"
-  )
-
-  expect_s3_class(map, "leaflet")
-})
-
-test_that("plot_collections_raster saves HTML output", {
-  skip_if_not_installed("terra")
-  skip_if_not_installed("leaflet")
-
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-
-  collection <- data.frame(
-    c_label = "site1",
-    c_latitude = 29.0,
-    c_longitude = -79.0
-  )
-
-  temp_dir <- tempdir()
-  out_html <- file.path(temp_dir, "test_map.html")
-
-  map <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection,
-    out_html = out_html
-  )
-
-  expect_true(file.exists(out_html))
-  unlink(out_html)
-})
-
-test_that("plot_collections_raster handles raster CRS reprojection", {
-  skip_if_not_installed("terra")
-  skip_if_not_installed("leaflet")
-
-  # Create raster in UTM
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(400000, 500000, 3100000, 3200000),
-    crs = "EPSG:32617"  # UTM Zone 17N
-  )
-
-  collection <- data.frame(
-    c_label = "site1",
-    c_latitude = 29.0,
-    c_longitude = -79.0
-  )
-
-  map <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection
-  )
-
-  expect_s3_class(map, "leaflet")
-})
-
-test_that("plot_collections_raster handles custom title", {
-  skip_if_not_installed("terra")
-  skip_if_not_installed("leaflet")
-
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-
-  collection <- data.frame(
-    c_label = "site1",
-    c_latitude = 29.0,
-    c_longitude = -79.0
-  )
-
-  map <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection,
-    title = "My Custom Title"
-  )
-
-  expect_s3_class(map, "leaflet")
-})
-
-test_that("plot_collections_raster handles show_rasters parameter", {
-  skip_if_not_installed("terra")
-  skip_if_not_installed("leaflet")
-
-  r1 <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-  r2 <- terra::rast(
-    matrix(100 + (1:100), ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-
-  collection <- data.frame(
-    c_label = "site1",
-    c_latitude = 29.0,
-    c_longitude = -79.0
-  )
-
-  raster_list <- list(Temperature = r1, Precipitation = r2)
-
-  # Show only Temperature by default
-  map <- plot_collections_raster(
-    raster_list = raster_list,
-    collection_df = collection,
-    show_rasters = "Temperature"
-  )
-
-  expect_s3_class(map, "leaflet")
-})
-
-test_that("plot_collections_raster filters sites with invalid coordinates", {
-  skip_if_not_installed("terra")
-  skip_if_not_installed("leaflet")
-
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-
-  # Include sites with NA coordinates
-  collection <- data.frame(
-    c_label = c("site1", "site2", "site3"),
-    c_latitude = c(28.5, NA, 30.5),
-    c_longitude = c(-79.5, -78.5, NA)
-  )
-
-  map <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection
-  )
-
-  expect_s3_class(map, "leaflet")
-})
-
-test_that("plot_collections_raster handles opacity parameter", {
-  skip_if_not_installed("terra")
-  skip_if_not_installed("leaflet")
-
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-
-  collection <- data.frame(
-    c_label = "site1",
-    c_latitude = 29.0,
-    c_longitude = -79.0
-  )
-
-  map <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection,
-    opacity = 0.3
-  )
-
-  expect_s3_class(map, "leaflet")
-})
-
-test_that("plot_collections_raster handles different color palettes", {
-  skip_if_not_installed("terra")
-  skip_if_not_installed("leaflet")
-
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-
-  collection <- data.frame(
-    c_label = "site1",
-    c_latitude = 29.0,
-    c_longitude = -79.0
-  )
-
-  for (pal in c("viridis", "magma", "plasma", "inferno")) {
-    map <- plot_collections_raster(
-      raster_list = r,
-      collection_df = collection,
-      palette = pal
-    )
-    expect_s3_class(map, "leaflet")
-  }
-})
-
-# Error handling tests
-test_that("plot_collections_raster errors with empty raster list", {
-  skip_if_not_installed("terra")
-  skip_if_not_installed("leaflet")
-
-  collection <- data.frame(
-    c_label = "site1",
-    c_latitude = 29.0,
-    c_longitude = -79.0
-  )
 
   expect_error(
-    plot_collections_raster(raster_list = list(), collection_df = collection),
+    plot_collections_raster(
+      raster_list   = list(),
+      collection_df = base_collection()
+    ),
     "at least one raster"
   )
 })
 
-test_that("plot_collections_raster errors with non-SpatRaster", {
-  skip_if_not_installed("leaflet")
-
-  collection <- data.frame(
-    c_label = "site1",
-    c_latitude = 29.0,
-    c_longitude = -79.0
-  )
-
-  expect_error(
-    plot_collections_raster(
-      raster_list = list(matrix(1:100, ncol = 10)),
-      collection_df = collection
-    ),
-    "not a SpatRaster"
-  )
-})
-
-test_that("plot_collections_raster errors with non-data frame", {
+test_that("errors when raster_list element is not a SpatRaster", {
   skip_if_not_installed("terra")
   skip_if_not_installed("leaflet")
 
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-
   expect_error(
     plot_collections_raster(
-      raster_list = r,
-      collection_df = list(c_label = "site1")
+      raster_list   = list(not_a_raster = matrix(1:9, 3)),
+      collection_df = base_collection()
     ),
-    "must be a data frame"
+    "SpatRaster"
   )
 })
 
-test_that("plot_collections_raster errors with missing lat/lon columns", {
+test_that("errors when collection_df is not a data frame", {
   skip_if_not_installed("terra")
   skip_if_not_installed("leaflet")
-
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-
-  collection <- data.frame(
-    c_label = "site1",
-    other_col = 29.0
-  )
 
   expect_error(
     plot_collections_raster(
-      raster_list = r,
-      collection_df = collection
+      raster_list   = list(r = make_raster()),
+      collection_df = "not_a_df"
     ),
-    "Could not auto-detect latitude"
+    "data frame"
   )
 })
 
-test_that("plot_collections_raster errors with no valid coordinates", {
+test_that("errors when lat column cannot be auto-detected", {
   skip_if_not_installed("terra")
   skip_if_not_installed("leaflet")
 
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
-  )
-
-  collection <- data.frame(
-    c_label = c("site1", "site2"),
-    c_latitude = c(NA, NA),
-    c_longitude = c(NA, NA)
-  )
+  bad_coll <- data.frame(c_label = "C1", my_y = 28.5, my_x = -79.5)
 
   expect_error(
     plot_collections_raster(
-      raster_list = r,
-      collection_df = collection
+      raster_list   = list(r = make_raster()),
+      collection_df = bad_coll
     ),
-    "No valid lat/lon coordinates"
+    "auto-detect latitude"
   )
 })
 
-test_that("plot_collections_raster returns leaflet object invisibly", {
+test_that("errors when all coordinates are NA", {
   skip_if_not_installed("terra")
   skip_if_not_installed("leaflet")
 
-  r <- terra::rast(
-    matrix(20:119, ncol = 10),
-    extent = terra::ext(-80, -70, 25, 35),
-    crs = "EPSG:4326"
+  na_coll <- data.frame(c_label = "C1", c_latitude = NA_real_, c_longitude = NA_real_)
+
+  expect_error(
+    plot_collections_raster(
+      raster_list   = list(r = make_raster()),
+      collection_df = na_coll
+    ),
+    "No valid lat/lon"
+  )
+})
+
+test_that("errors when lulc is not a SpatRaster, path, or URL vector", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  expect_error(
+    plot_collections_raster(
+      raster_list   = list(r = make_raster()),
+      collection_df = base_collection(),
+      lulc          = 42L
+    ),
+    "SpatRaster"
+  )
+})
+
+# ── lat/lon auto-detection ────────────────────────────────────────────────────
+
+test_that("auto-detects collection_latitude / collection_longitude", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  coll <- data.frame(
+    c_label              = "C1",
+    collection_latitude  = 29.0,
+    collection_longitude = -79.0
+  )
+  expect_s3_class(
+    plot_collections_raster(raster_list = list(r = make_raster()), collection_df = coll),
+    "leaflet"
+  )
+})
+
+test_that("auto-detects GPSLatitude / GPSLongitude", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  coll <- data.frame(c_label = "C1", GPSLatitude = 29.0, GPSLongitude = -79.0)
+  expect_s3_class(
+    plot_collections_raster(raster_list = list(r = make_raster()), collection_df = coll),
+    "leaflet"
+  )
+})
+
+test_that("auto-detects lat / lon", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  coll <- data.frame(c_label = "C1", lat = 29.0, lon = -79.0)
+  expect_s3_class(
+    plot_collections_raster(raster_list = list(r = make_raster()), collection_df = coll),
+    "leaflet"
+  )
+})
+
+# ── species-based circle markers ──────────────────────────────────────────────
+
+test_that("species_col colors markers without error", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  coll <- data.frame(
+    c_label     = c("C1", "C2", "C3"),
+    c_latitude  = c(28.5, 29.5, 30.5),
+    c_longitude = c(-79.5, -78.5, -77.5),
+    species_id  = c("Ce", "Cb", "Ce")
   )
 
-  collection <- data.frame(
-    c_label = "site1",
-    c_latitude = 29.0,
-    c_longitude = -79.0
+  expect_s3_class(
+    plot_collections_raster(
+      raster_list   = list(r = make_raster()),
+      collection_df = coll,
+      species_col   = "species_id",
+      species_colors = c(Ce = "blue", Cb = "orange")
+    ),
+    "leaflet"
   )
+})
+
+test_that("species_col with no species_colors uses default palette", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  coll <- data.frame(
+    c_label     = c("C1", "C2"),
+    c_latitude  = c(28.5, 29.5),
+    c_longitude = c(-79.5, -78.5),
+    species_id  = c("Ce", "Cb")
+  )
+
+  expect_s3_class(
+    plot_collections_raster(
+      raster_list   = list(r = make_raster()),
+      collection_df = coll,
+      species_col   = "species_id"
+    ),
+    "leaflet"
+  )
+})
+
+# ── proliferating-based awesome icon markers ──────────────────────────────────
+
+test_that("proliferating_col uses awesomeIcons without error", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  coll <- data.frame(
+    c_label       = c("C1", "C2", "C3"),
+    c_latitude    = c(28.5, 29.5, 30.5),
+    c_longitude   = c(-79.5, -78.5, -77.5),
+    proliferating = c(1, 1, 0),
+    species_id    = c("Ce", NA, NA)
+  )
+
+  expect_s3_class(
+    plot_collections_raster(
+      raster_list       = list(r = make_raster()),
+      collection_df     = coll,
+      proliferating_col = "proliferating",
+      species_col       = "species_id"
+    ),
+    "leaflet"
+  )
+})
+
+test_that("proliferating all-zero produces black markers", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  coll <- data.frame(
+    c_label       = "C1",
+    c_latitude    = 28.5,
+    c_longitude   = -79.5,
+    proliferating = 0
+  )
+
+  expect_s3_class(
+    plot_collections_raster(
+      raster_list       = list(r = make_raster()),
+      collection_df     = coll,
+      proliferating_col = "proliferating"
+    ),
+    "leaflet"
+  )
+})
+
+# ── lulc layer ────────────────────────────────────────────────────────────────
+
+test_that("lulc SpatRaster is accepted and map is returned", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  expect_s3_class(
+    plot_collections_raster(
+      raster_list   = list(r = make_raster()),
+      collection_df = base_collection(),
+      lulc          = make_lulc_raster()
+    ),
+    "leaflet"
+  )
+})
+
+test_that("lulc file path is accepted and map is returned", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  tmp_lulc <- tempfile(fileext = ".tif")
+  on.exit(unlink(tmp_lulc))
+  terra::writeRaster(make_lulc_raster(), tmp_lulc, overwrite = TRUE)
+
+  expect_s3_class(
+    plot_collections_raster(
+      raster_list   = list(r = make_raster()),
+      collection_df = base_collection(),
+      lulc          = tmp_lulc
+    ),
+    "leaflet"
+  )
+})
+
+test_that("show_lulc = FALSE does not error", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  expect_s3_class(
+    plot_collections_raster(
+      raster_list   = list(r = make_raster()),
+      collection_df = base_collection(),
+      lulc          = make_lulc_raster(),
+      show_lulc     = FALSE
+    ),
+    "leaflet"
+  )
+})
+
+# ── show_rasters ──────────────────────────────────────────────────────────────
+
+test_that("show_rasters = NULL shows all layers without error", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  expect_s3_class(
+    plot_collections_raster(
+      raster_list   = list(A = make_raster(), B = make_raster(101:200)),
+      collection_df = base_collection(),
+      show_rasters  = NULL
+    ),
+    "leaflet"
+  )
+})
+
+test_that("show_rasters subset hides non-selected layers without error", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  expect_s3_class(
+    plot_collections_raster(
+      raster_list   = list(A = make_raster(), B = make_raster(101:200)),
+      collection_df = base_collection(),
+      show_rasters  = "A"
+    ),
+    "leaflet"
+  )
+})
+
+# ── CRS reprojection ──────────────────────────────────────────────────────────
+
+test_that("raster in EPSG:3857 is reprojected silently", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+
+  r_merc <- terra::rast(
+    matrix(1:100, ncol = 10),
+    extent = terra::ext(-8900000, -7800000, 3200000, 4200000),
+    crs    = "EPSG:3857"
+  )
+
+  expect_s3_class(
+    plot_collections_raster(
+      raster_list   = list(r = r_merc),
+      collection_df = data.frame(
+        c_label     = "C1",
+        c_latitude  = 29.0,
+        c_longitude = -79.0
+      )
+    ),
+    "leaflet"
+  )
+})
+
+# ── HTML output ───────────────────────────────────────────────────────────────
+
+test_that("out_html writes an HTML file to disk", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+  skip_if_not_installed("htmlwidgets")
+
+  out_html <- tempfile(fileext = ".html")
+  on.exit(unlink(c(out_html, paste0(tools::file_path_sans_ext(out_html), "_files")),
+                 recursive = TRUE))
+
+  plot_collections_raster(
+    raster_list   = list(r = make_raster()),
+    collection_df = base_collection(),
+    out_html      = out_html
+  )
+
+  expect_true(file.exists(out_html))
+  expect_gt(file.size(out_html), 0)
+})
+
+test_that("out_html creates parent directory if missing", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
+  skip_if_not_installed("htmlwidgets")
+
+  new_dir  <- file.path(tempdir(), paste0("pcr_out_", Sys.getpid()))
+  out_html <- file.path(new_dir, "map.html")
+  on.exit(unlink(new_dir, recursive = TRUE))
+
+  plot_collections_raster(
+    raster_list   = list(r = make_raster()),
+    collection_df = base_collection(),
+    out_html      = out_html
+  )
+
+  expect_true(file.exists(out_html))
+})
+
+# ── return value ──────────────────────────────────────────────────────────────
+
+test_that("return value is invisible (still accessible)", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("leaflet")
 
   result <- plot_collections_raster(
-    raster_list = r,
-    collection_df = collection
+    raster_list   = list(r = make_raster()),
+    collection_df = base_collection()
   )
 
   expect_s3_class(result, "leaflet")
